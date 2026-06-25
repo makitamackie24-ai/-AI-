@@ -249,8 +249,8 @@ if 'analysis_results' in st.session_state:
     
     # --- 厳選AIレコメンドセクション ---
     st.subheader("厳選AIレコメンド銘柄")
-    st.write("設定された5つの厳しい条件（中期・短期の上昇期待、終値上昇予測、高い予測精度、十分なボラティリティ）をすべてクリアした有望銘柄をピックアップします。")
-    st.caption("【選定条件】・1週間後＆翌々日の上昇確率50%超 ・翌日終値が上昇予測 ・AI予測誤差3%未満 ・翌日予測変動幅1.5%以上")
+    st.write("設定された5つの厳しい条件（中期・短期の上昇期待、翌日予測の方向性一致、高い予測精度、十分なボラティリティ）をすべてクリアした有望銘柄をピックアップします。")
+    st.caption("【選定条件】・1週間後＆翌々日の上昇確率50%超 ・翌日の上昇確率と予測終値の方向が一致 ・AI予測誤差3%未満 ・翌日予測変動幅1.5%以上")
     
     recommended_stocks = []
     for stock in results:
@@ -258,8 +258,10 @@ if 'analysis_results' in st.session_state:
         cond1 = stock['score_1w'] > 50
         # 条件2: 翌々日の上昇確率が高い (50%超)
         cond2 = stock['score_2d'] > 50
-        # 条件3: 翌日の予測終値が直近の終値よりも高い
-        cond3 = stock['pred_close'] > stock['price']
+        # 条件3: 「翌日の上昇確率が高いかつ予測終値が現在より高い」または「翌日の上昇確率が低いかつ予測終値が現在より低い」
+        cond3_up = (stock['score'] > 50) and (stock['pred_close'] > stock['price'])
+        cond3_down = (stock['score'] <= 50) and (stock['pred_close'] <= stock['price'])
+        cond3 = cond3_up or cond3_down
         # 条件4: 直近の予測の答え合わせの誤差が少ない (誤差率3%未満)
         error_rate = abs(stock['price'] - stock['prev_pred_close']) / stock['price'] * 100 if stock['price'] > 0 else 100
         cond4 = error_rate < 3.0
