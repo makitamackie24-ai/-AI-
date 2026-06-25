@@ -287,6 +287,9 @@ if 'analysis_results' in st.session_state:
                     st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>翌々日: {stock['score_2d']:.1f}%</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: orange; font-weight: bold; margin-bottom: 0px;'>変動幅: {stock['pred_diff_pct']:.1f}%</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: gray; font-size: 0.8em; margin-bottom: 0px;'>予測誤差: {stock['error_rate']:.1f}%</p>", unsafe_allow_html=True)
+                    st.markdown("---")
+                    st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px;'><b>直近 ({stock['latest_date']})</b><br>終値: ¥{stock['price']:,.0f} | 始値: ¥{stock['open']:,.0f}<br>高値: ¥{stock['high']:,.0f} | 安値: ¥{stock['low']:,.0f}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px; margin-top: 5px;'><b>予測 ({stock['next_date']})</b><br>終値: ¥{stock['pred_close']:,.0f} | 始値: ¥{stock['pred_open']:,.0f}<br>高値: ¥{stock['pred_high']:,.0f} | 安値: ¥{stock['pred_low']:,.0f}</p>", unsafe_allow_html=True)
     else:
         st.info("現在、すべての厳選条件を満たす銘柄はありません。相場環境が変わるのをお待ちください。")
         
