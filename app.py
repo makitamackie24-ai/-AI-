@@ -260,8 +260,8 @@ if 'analysis_results' in st.session_state:
     
     # --- 厳選AIレコメンドセクション ---
     st.subheader("厳選AIレコメンド銘柄")
-    st.write("設定された厳しい条件（中期・短期の上昇期待、翌日予測の方向性一致、高い予測精度、十分なボラティリティ、トレンド一致、出来高の裏付け）をすべてクリアした有望銘柄をピックアップします。")
-    st.caption("【選定条件】・1週間後＆翌々日の上昇確率50%超 ・翌日の上昇確率と予測終値の方向が一致 ・AI予測誤差3%未満 ・翌日予測変動幅1.5%以上 ・終値が25日移動平均線を上回る ・出来高が5日平均超えまたは前日比プラス")
+    st.write("設定された厳しい条件（中期・短期の上昇期待、翌日予測の方向性一致、高い予測精度、十分なボラティリティ）をすべてクリアした有望銘柄をピックアップします。")
+    st.caption("【選定条件】・1週間後＆翌々日の上昇確率50%超 ・翌日の上昇確率と予測終値の方向が一致 ・AI予測誤差3%未満 ・翌日予測変動幅1.5%以上")
     
     recommended_stocks = []
     for stock in results:
@@ -278,12 +278,8 @@ if 'analysis_results' in st.session_state:
         cond4 = error_rate < 3.0
         # 条件5: 翌日変動幅予測が大きい (1.5%以上)
         cond5 = stock['pred_diff_pct'] >= 1.5
-        # 条件6: 現在の終値が25日移動平均線を上回っていること
-        cond6 = stock['price'] > stock['current_sma_25']
-        # 条件7: 直近の出来高が、5日平均出来高を上回っていること（または前日比プラス）
-        cond7 = (stock['current_volume'] > stock['vol_5d_avg']) or (stock['vol_change'] > 0)
         
-        if cond1 and cond2 and cond3 and cond4 and cond5 and cond6 and cond7:
+        if cond1 and cond2 and cond3 and cond4 and cond5:
             # 総合スコアの計算（ソート用）
             total_score = stock['score_1w'] + stock['score_2d'] + (stock['pred_diff_pct'] * 5) - (error_rate * 5)
             stock['recommend_score'] = total_score
@@ -301,7 +297,7 @@ if 'analysis_results' in st.session_state:
                     st.markdown(f"**{stock['name']}**")
                     st.caption(f"{stock['ticker']}")
                     
-                    # RSIの表示とアラート
+                    # RSIの表示と過熱感アラート
                     if stock['current_rsi'] >= 70:
                         rsi_color = "red"
                         rsi_alert = " 過熱感注意"
@@ -309,6 +305,15 @@ if 'analysis_results' in st.session_state:
                         rsi_color = "gray"
                         rsi_alert = ""
                     st.markdown(f"<p style='color: {rsi_color}; font-size: 0.85em; font-weight: bold; margin-bottom: 5px;'>RSI: {stock['current_rsi']:.1f}%{rsi_alert}</p>", unsafe_allow_html=True)
+
+                    # 移動平均線と出来高のアラート
+                    alerts = []
+                    if stock['price'] < stock['current_sma_25']:
+                        alerts.append("25日線割れ")
+                    if stock['current_volume'] < stock['vol_5d_avg']:
+                        alerts.append("出来高低迷")
+                    if alerts:
+                        st.markdown(f"<p style='color: red; font-size: 0.85em; font-weight: bold; margin-top: -5px; margin-bottom: 5px;'>注意: {' / '.join(alerts)}</p>", unsafe_allow_html=True)
 
                     st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>1週間後: {stock['score_1w']:.1f}%</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>翌々日: {stock['score_2d']:.1f}%</p>", unsafe_allow_html=True)
