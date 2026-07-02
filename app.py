@@ -147,14 +147,8 @@ def add_technical_indicators(df):
 
     return df
 
-# --- データ取得とモデル学習関数（各銘柄もキャッシュ） ---
-@st.cache_data(ttl=86400)
-def analyze_stock(ticker):
-    end_date = datetime.today()
-    start_date = end_date - timedelta(days=365 * 3)
-    
-    df = yf.download(ticker, start=start_date, end=end_date, progress=False)
-    
+# --- モデル学習関数 ---
+def analyze_stock_data(df):
     if len(df) < 50:
         return None
     
@@ -237,8 +231,26 @@ def generate_all_results():
     results = []
     progress_bar = st.progress(0)
     
+    tickers = list(TARGET_STOCKS.keys())
+    end_date = datetime.today()
+    start_date = end_date - timedelta(days=365 * 3)
+    
+    # 全銘柄のデータを一括ダウンロード（通信回数を1回に減らし高速化）
+    df_all = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', threads=True, progress=False)
+    
     for i, (ticker, name) in enumerate(TARGET_STOCKS.items()):
-        analysis = analyze_stock(ticker)
+        try:
+            # 取得した一括データから対象銘柄のデータを抽出
+            if len(tickers) > 1:
+                df_ticker = df_all[ticker].copy()
+            else:
+                df_ticker = df_all.copy()
+            df_ticker.dropna(how='all', inplace=True)
+        except KeyError:
+            df_ticker = pd.DataFrame()
+            
+        analysis = analyze_stock_data(df_ticker)
+        
         if analysis is not None:
             df = analysis["df"]
             
