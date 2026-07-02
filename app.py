@@ -258,7 +258,7 @@ def analyze_stock_data(df, n_estimators=100):
 
 # --- 全銘柄の分析処理を一括キャッシュ（24時間保持） ---
 @st.cache_data(ttl=86400, show_spinner=False)
-def generate_all_results(years=3.0, n_estimators=100):
+def generate_all_results(years=3.0, n_estimators=100, top_n=134):
     results = []
     progress_bar = st.progress(0)
     
@@ -270,7 +270,11 @@ def generate_all_results(years=3.0, n_estimators=100):
     # 全銘柄のデータを一括ダウンロード（通信回数を1回に減らし高速化）
     df_all = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', threads=True, progress=False)
     
-    for i, (ticker, name) in enumerate(TARGET_STOCKS.items()):
+    # --- 売買代金の計算と上位抽出 ---
+    trading_values = {}
+    valid_tickers = []
+    
+    for ticker in tickers:
         try:
             # 取得した一括データから対象銘柄のデータを抽出
             if len(tickers) > 1:
@@ -278,8 +282,30 @@ def generate_all_results(years=3.0, n_estimators=100):
             else:
                 df_ticker = df_all.copy()
             df_ticker.dropna(how='all', inplace=True)
-        except KeyError:
-            df_ticker = pd.DataFrame()
+            
+            if len(df_ticker) > 0:
+                def get_val(val):
+                    return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
+                
+                latest_close = get_val(df_ticker['Close'].iloc[-1])
+                latest_volume = get_val(df_ticker['Volume'].iloc[-1])
+                trading_value = latest_close * latest_volume
+                
+                trading_values[ticker] = {
+                    'value': trading_value,
+                    'df': df_ticker
+                }
+                valid_tickers.append(ticker)
+        except Exception:
+            pass
+            
+    # 売買代金が大きい順にソートし、上位 top_n 社を抽出
+    sorted_tickers = sorted(valid_tickers, key=lambda x: trading_values[x]['value'], reverse=True)[:top_n]
+    
+    # --- 抽出された上位企業のみを解析 ---
+    for i, ticker in enumerate(sorted_tickers):
+        name = TARGET_STOCKS[ticker]
+        df_ticker = trading_values[ticker]['df']
             
         # 木の数を渡して分析実行
         analysis = analyze_stock_data(df_ticker, n_estimators=n_estimators)
@@ -345,44 +371,39 @@ def generate_all_results(years=3.0, n_estimators=100):
                 "pred_diff_pct": (analysis["pred_high"] - analysis["pred_low"]) / current_price * 100 if current_price > 0 else 0,
                 "df": df
             })
-        progress_bar.progress((i + 1) / stock_count)
+        progress_bar.progress((i + 1) / len(sorted_tickers))
         
     progress_bar.empty()
     return results
 
 # --- メイン処理 ---
-col1, col2, col3 = st.columns([1, 1, 1])
+st.markdown("### 分析設定")
+top_n = st.slider(f"解析対象とする売買代金上位の企業数を選択 (最大{stock_count}社)", min_value=10, max_value=stock_count, value=50, step=10, help="全銘柄から直近の売買代金が多い企業を自動選出し、AI解析の対象を絞ります。数を減らすと計算時間が短縮されます。")
+
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    run_fast_btn = st.button("簡易分析 (約1.5年/木50本)", type="secondary", help="精度はやや下がりますが、早く結果を確認できます。")
+    run_btn = st.button("AI分析を実行 / 結果を表示", type="primary", help="高精度な詳細分析（約3年分のデータ・木100本）を行います。")
 with col2:
-    run_detail_btn = st.button("詳細分析 (約3年/木100本)", type="primary", help="高精度な分析を行いますが、時間がかかります（約5分）。")
-with col3:
     clear_btn = st.button("データを更新して再計算 (キャッシュクリア)")
 
 if clear_btn:
     st.cache_data.clear()
     if 'analysis_results' in st.session_state:
         del st.session_state['analysis_results']
-    st.success("キャッシュをクリアしました。分析ボタンを押してください。")
+    st.success("キャッシュをクリアしました。「AI分析を実行」ボタンを押してください。")
     st.rerun()
 
 # 実行ボタンが押された場合の処理
-if run_fast_btn or run_detail_btn:
-    if run_fast_btn:
-        years = 1.5
-        n_estimators = 50
-        msg_type = "簡易分析"
-    else:
-        years = 3.0
-        n_estimators = 100
-        msg_type = "詳細分析"
-        
-    with st.spinner(f"対象{stock_count}社のデータを取得し、AIモデルで{msg_type}中...\n（計算済みの場合は一瞬で表示されます）"):
-        results = generate_all_results(years=years, n_estimators=n_estimators)
+if run_btn:
+    years = 3.0
+    n_estimators = 100
+    
+    with st.spinner(f"対象全社のデータを取得し、売買代金上位{top_n}社をAIモデルで詳細分析中...\n（計算済みの場合は一瞬で表示されます）"):
+        results = generate_all_results(years=years, n_estimators=n_estimators, top_n=top_n)
         results_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
         st.session_state['analysis_results'] = results_sorted
-        st.success(f"{len(results)}社の{msg_type}が完了（またはキャッシュから取得）しました！")
+        st.success(f"売買代金上位 {len(results)}社の詳細分析が完了（またはキャッシュから取得）しました！")
 
 # --- 結果の表示 ---
 if 'analysis_results' in st.session_state:
