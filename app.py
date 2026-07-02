@@ -179,7 +179,7 @@ def add_technical_indicators(df):
     return df
 
 # --- モデル学習関数 ---
-def analyze_stock_data(df):
+def analyze_stock_data(df, n_estimators=100):
     if len(df) < 50:
         return None
     
@@ -203,14 +203,14 @@ def analyze_stock_data(df):
     features = ['Close', 'Volume', 'SMA_5', 'SMA_25', 'Return', 'RSI', 'Volatility', 'Vol_Change']
     X = df_clean[features]
     
-    # モデルの構築と学習
-    model_class = RandomForestClassifier(n_estimators=100, random_state=42).fit(X, df_clean['Target_Class'])
-    model_class_2d = RandomForestClassifier(n_estimators=100, random_state=42).fit(X, df_clean['Target_Class_2D'])
-    model_class_1w = RandomForestClassifier(n_estimators=100, random_state=42).fit(X, df_clean['Target_Class_1W'])
-    model_reg = RandomForestRegressor(n_estimators=100, random_state=42).fit(X, df_clean['Target_Reg'])
-    model_reg_open = RandomForestRegressor(n_estimators=100, random_state=42).fit(X, df_clean['Target_Reg_Open'])
-    model_reg_high = RandomForestRegressor(n_estimators=100, random_state=42).fit(X, df_clean['Target_Reg_High'])
-    model_reg_low = RandomForestRegressor(n_estimators=100, random_state=42).fit(X, df_clean['Target_Reg_Low'])
+    # モデルの構築と学習 (木の数を変数化)
+    model_class = RandomForestClassifier(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Class'])
+    model_class_2d = RandomForestClassifier(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Class_2D'])
+    model_class_1w = RandomForestClassifier(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Class_1W'])
+    model_reg = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg'])
+    model_reg_open = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg_Open'])
+    model_reg_high = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg_High'])
+    model_reg_low = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg_Low'])
     
     latest_data = df.iloc[-1:][features]
     prev_data = df.iloc[-2:-1][features]
@@ -258,13 +258,14 @@ def analyze_stock_data(df):
 
 # --- 全銘柄の分析処理を一括キャッシュ（24時間保持） ---
 @st.cache_data(ttl=86400, show_spinner=False)
-def generate_all_results():
+def generate_all_results(years=3.0, n_estimators=100):
     results = []
     progress_bar = st.progress(0)
     
     tickers = list(TARGET_STOCKS.keys())
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=365 * 3)
+    # 取得期間を変数化
+    start_date = end_date - timedelta(days=int(365 * years))
     
     # 全銘柄のデータを一括ダウンロード（通信回数を1回に減らし高速化）
     df_all = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', threads=True, progress=False)
@@ -280,7 +281,8 @@ def generate_all_results():
         except KeyError:
             df_ticker = pd.DataFrame()
             
-        analysis = analyze_stock_data(df_ticker)
+        # 木の数を渡して分析実行
+        analysis = analyze_stock_data(df_ticker, n_estimators=n_estimators)
         
         if analysis is not None:
             df = analysis["df"]
@@ -349,26 +351,38 @@ def generate_all_results():
     return results
 
 # --- メイン処理 ---
-col1, col2 = st.columns([1, 2])
+col1, col2, col3 = st.columns([1, 1, 1])
 
 with col1:
-    run_btn = st.button("AI分析を実行 / 結果を表示", type="primary")
+    run_fast_btn = st.button("簡易分析 (約1.5年/木50本)", type="secondary", help="精度はやや下がりますが、早く結果を確認できます。")
 with col2:
+    run_detail_btn = st.button("詳細分析 (約3年/木100本)", type="primary", help="高精度な分析を行いますが、時間がかかります（約5分）。")
+with col3:
     clear_btn = st.button("データを更新して再計算 (キャッシュクリア)")
 
 if clear_btn:
     st.cache_data.clear()
     if 'analysis_results' in st.session_state:
         del st.session_state['analysis_results']
-    st.success("キャッシュをクリアしました。「AI分析を実行」ボタンを押してください。")
+    st.success("キャッシュをクリアしました。分析ボタンを押してください。")
     st.rerun()
 
-if run_btn:
-    with st.spinner(f"対象{stock_count}社のデータを取得し、AIモデルで分析中...\n（初回は約60〜120秒かかります。計算済みの場合は一瞬で表示されます）"):
-        results = generate_all_results()
+# 実行ボタンが押された場合の処理
+if run_fast_btn or run_detail_btn:
+    if run_fast_btn:
+        years = 1.5
+        n_estimators = 50
+        msg_type = "簡易分析"
+    else:
+        years = 3.0
+        n_estimators = 100
+        msg_type = "詳細分析"
+        
+    with st.spinner(f"対象{stock_count}社のデータを取得し、AIモデルで{msg_type}中...\n（計算済みの場合は一瞬で表示されます）"):
+        results = generate_all_results(years=years, n_estimators=n_estimators)
         results_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
         st.session_state['analysis_results'] = results_sorted
-        st.success(f"{len(results)}社の分析が完了（またはキャッシュから取得）しました！")
+        st.success(f"{len(results)}社の{msg_type}が完了（またはキャッシュから取得）しました！")
 
 # --- 結果の表示 ---
 if 'analysis_results' in st.session_state:
