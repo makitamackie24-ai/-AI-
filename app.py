@@ -147,8 +147,8 @@ def add_technical_indicators(df):
 
     return df
 
-# --- データ取得とモデル学習関数（キャッシュして高速化） ---
-@st.cache_data(ttl=3600)
+# --- データ取得とモデル学習関数（各銘柄もキャッシュ） ---
+@st.cache_data(ttl=86400)
 def analyze_stock(ticker):
     end_date = datetime.today()
     start_date = end_date - timedelta(days=365 * 3)
@@ -231,80 +231,101 @@ def analyze_stock(ticker):
         "prev_pred_low": prev_predicted_low
     }
 
-# --- メイン処理 ---
-if st.button(f"分析を開始する（対象{stock_count}社: 約90〜150秒かかります）"):
-    with st.spinner(f"対象{stock_count}社の株価データを取得し、AIモデルで分析中..."):
-        results = []
-        progress_bar = st.progress(0)
-        
-        for i, (ticker, name) in enumerate(TARGET_STOCKS.items()):
-            analysis = analyze_stock(ticker)
-            if analysis is not None:
-                df = analysis["df"]
-                
-                # Seriesや配列の対応
-                def get_val(val):
-                    return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
-
-                current_price = get_val(df['Close'].iloc[-1])
-                current_open = get_val(df['Open'].iloc[-1])
-                current_high = get_val(df['High'].iloc[-1])
-                current_low = get_val(df['Low'].iloc[-1])
-                
-                current_sma_25 = get_val(df['SMA_25'].iloc[-1])
-                current_volume = get_val(df['Volume'].iloc[-1])
-                vol_change = get_val(df['Vol_Change'].iloc[-1])
-                vol_5d_avg = get_val(df['Volume'].rolling(window=5).mean().iloc[-1])
-                current_rsi = get_val(df['RSI'].iloc[-1])
-                
-                # 対象日付の計算
-                latest_date_dt = df.index[-1]
-                next_date_dt = latest_date_dt + pd.offsets.BDay(1)
-                two_days_later_dt = latest_date_dt + pd.offsets.BDay(2)
-                prev_date_dt = df.index[-2]
-                week_later_dt = latest_date_dt + pd.offsets.BDay(5)
-                
-                results.append({
-                    "ticker": ticker,
-                    "name": name,
-                    "price": current_price,
-                    "open": current_open,
-                    "high": current_high,
-                    "low": current_low,
-                    "current_sma_25": current_sma_25,
-                    "current_volume": current_volume,
-                    "vol_change": vol_change,
-                    "vol_5d_avg": vol_5d_avg,
-                    "current_rsi": current_rsi,
-                    "latest_date": latest_date_dt.strftime('%Y/%m/%d'),
-                    "next_date": next_date_dt.strftime('%Y/%m/%d'),
-                    "two_days_later_date": two_days_later_dt.strftime('%Y/%m/%d'),
-                    "prev_date": prev_date_dt.strftime('%Y/%m/%d'),
-                    "week_later_date": week_later_dt.strftime('%Y/%m/%d'),
-                    "score": analysis["proba"] * 100,
-                    "prev_score": analysis["prev_proba"] * 100,
-                    "score_2d": analysis["proba_2d"] * 100,
-                    "prev_score_2d": analysis["prev_proba_2d"] * 100,
-                    "score_1w": analysis["proba_1w"] * 100,
-                    "prev_score_1w": analysis["prev_proba_1w"] * 100,
-                    "actual_up": analysis["actual_up"],
-                    "pred_close": analysis["pred_close"],
-                    "prev_pred_close": analysis["prev_pred_close"], 
-                    "pred_open": analysis["pred_open"],
-                    "prev_pred_open": analysis["prev_pred_open"], 
-                    "pred_high": analysis["pred_high"],
-                    "prev_pred_high": analysis["prev_pred_high"],
-                    "pred_low": analysis["pred_low"],
-                    "prev_pred_low": analysis["prev_pred_low"],
-                    "pred_diff": analysis["pred_high"] - analysis["pred_low"],
-                    "pred_diff_pct": (analysis["pred_high"] - analysis["pred_low"]) / current_price * 100 if current_price > 0 else 0,
-                    "df": df
-                })
-            progress_bar.progress((i + 1) / stock_count)
+# --- 全銘柄の分析処理を一括キャッシュ（24時間保持） ---
+@st.cache_data(ttl=86400, show_spinner=False)
+def generate_all_results():
+    results = []
+    progress_bar = st.progress(0)
+    
+    for i, (ticker, name) in enumerate(TARGET_STOCKS.items()):
+        analysis = analyze_stock(ticker)
+        if analysis is not None:
+            df = analysis["df"]
             
+            # Seriesや配列の対応
+            def get_val(val):
+                return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
+
+            current_price = get_val(df['Close'].iloc[-1])
+            current_open = get_val(df['Open'].iloc[-1])
+            current_high = get_val(df['High'].iloc[-1])
+            current_low = get_val(df['Low'].iloc[-1])
+            
+            current_sma_25 = get_val(df['SMA_25'].iloc[-1])
+            current_volume = get_val(df['Volume'].iloc[-1])
+            vol_change = get_val(df['Vol_Change'].iloc[-1])
+            vol_5d_avg = get_val(df['Volume'].rolling(window=5).mean().iloc[-1])
+            current_rsi = get_val(df['RSI'].iloc[-1])
+            
+            # 対象日付の計算
+            latest_date_dt = df.index[-1]
+            next_date_dt = latest_date_dt + pd.offsets.BDay(1)
+            two_days_later_dt = latest_date_dt + pd.offsets.BDay(2)
+            prev_date_dt = df.index[-2]
+            week_later_dt = latest_date_dt + pd.offsets.BDay(5)
+            
+            results.append({
+                "ticker": ticker,
+                "name": name,
+                "price": current_price,
+                "open": current_open,
+                "high": current_high,
+                "low": current_low,
+                "current_sma_25": current_sma_25,
+                "current_volume": current_volume,
+                "vol_change": vol_change,
+                "vol_5d_avg": vol_5d_avg,
+                "current_rsi": current_rsi,
+                "latest_date": latest_date_dt.strftime('%Y/%m/%d'),
+                "next_date": next_date_dt.strftime('%Y/%m/%d'),
+                "two_days_later_date": two_days_later_dt.strftime('%Y/%m/%d'),
+                "prev_date": prev_date_dt.strftime('%Y/%m/%d'),
+                "week_later_date": week_later_dt.strftime('%Y/%m/%d'),
+                "score": analysis["proba"] * 100,
+                "prev_score": analysis["prev_proba"] * 100,
+                "score_2d": analysis["proba_2d"] * 100,
+                "prev_score_2d": analysis["prev_proba_2d"] * 100,
+                "score_1w": analysis["proba_1w"] * 100,
+                "prev_score_1w": analysis["prev_proba_1w"] * 100,
+                "actual_up": analysis["actual_up"],
+                "pred_close": analysis["pred_close"],
+                "prev_pred_close": analysis["prev_pred_close"], 
+                "pred_open": analysis["pred_open"],
+                "prev_pred_open": analysis["prev_pred_open"], 
+                "pred_high": analysis["pred_high"],
+                "prev_pred_high": analysis["prev_pred_high"],
+                "pred_low": analysis["pred_low"],
+                "prev_pred_low": analysis["prev_pred_low"],
+                "pred_diff": analysis["pred_high"] - analysis["pred_low"],
+                "pred_diff_pct": (analysis["pred_high"] - analysis["pred_low"]) / current_price * 100 if current_price > 0 else 0,
+                "df": df
+            })
+        progress_bar.progress((i + 1) / stock_count)
+        
+    progress_bar.empty()
+    return results
+
+# --- メイン処理 ---
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    run_btn = st.button("AI分析を実行 / 結果を表示", type="primary")
+with col2:
+    clear_btn = st.button("データを更新して再計算 (キャッシュクリア)")
+
+if clear_btn:
+    st.cache_data.clear()
+    if 'analysis_results' in st.session_state:
+        del st.session_state['analysis_results']
+    st.success("キャッシュをクリアしました。「AI分析を実行」ボタンを押してください。")
+    st.rerun()
+
+if run_btn:
+    with st.spinner(f"対象{stock_count}社のデータを取得し、AIモデルで分析中...\n（初回は約90〜150秒かかります。計算済みの場合は一瞬で表示されます）"):
+        results = generate_all_results()
         results_sorted = sorted(results, key=lambda x: x['score'], reverse=True)
         st.session_state['analysis_results'] = results_sorted
-        st.success(f"{len(results)}社の分析が完了しました！")
+        st.success(f"{len(results)}社の分析が完了（またはキャッシュから取得）しました！")
 
 # --- 結果の表示 ---
 if 'analysis_results' in st.session_state:
