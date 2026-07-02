@@ -343,7 +343,7 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134):
 
 # --- メイン処理 ---
 st.markdown("### 分析設定")
-top_n = st.slider(f"解析対象とする売買代金上位の企業数を選択 (最大{stock_count}社)", min_value=10, max_value=stock_count, value=50, step=10, help="全銘柄から直近の売買代金が多い企業を自動選出し、AI解析の対象を絞ります。数を減らすと計算時間が短縮されます。")
+top_n = st.slider(f"解析対象とする売買代金上位の企業数を選択 (最大{stock_count}社)", min_value=10, max_value=stock_count, value=100, step=10, help="全銘柄から直近の売買代金が多い企業を自動選出し、AI解析の対象を絞ります。数を減らすと計算時間が短縮されます。")
 
 col1, col2 = st.columns([1, 2])
 
