@@ -162,6 +162,7 @@ def analyze_stock_data(df, n_estimators=100):
     df['Target_Reg_Open'] = df['Open'].shift(-1)
     df['Target_Reg_High'] = df['High'].shift(-1)
     df['Target_Reg_Low'] = df['Low'].shift(-1)
+    df['Target_Reg_Open_2D'] = df['Open'].shift(-2)
     
     df_clean = df.dropna()
     
@@ -176,6 +177,7 @@ def analyze_stock_data(df, n_estimators=100):
     model_reg_open = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg_Open'])
     model_reg_high = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg_High'])
     model_reg_low = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg_Low'])
+    model_reg_open_2d = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg_Open_2D'])
     
     latest_data = df.iloc[-1:][features]
     prev_data = df.iloc[-2:-1][features]
@@ -199,6 +201,8 @@ def analyze_stock_data(df, n_estimators=100):
     prev_predicted_high = model_reg_high.predict(prev_data)[0]
     predicted_low = model_reg_low.predict(latest_data)[0]
     prev_predicted_low = model_reg_low.predict(prev_data)[0]
+    predicted_open_2d = model_reg_open_2d.predict(latest_data)[0]
+    prev_predicted_open_2d = model_reg_open_2d.predict(prev_data)[0]
     
     actual_up = float(df['Close'].iloc[-1]) > float(df['Close'].iloc[-2])
     
@@ -218,7 +222,9 @@ def analyze_stock_data(df, n_estimators=100):
         "pred_high": predicted_high,
         "prev_pred_high": prev_predicted_high,
         "pred_low": predicted_low,
-        "prev_pred_low": prev_predicted_low
+        "prev_pred_low": prev_predicted_low,
+        "pred_open_2d": predicted_open_2d,
+        "prev_pred_open_2d": prev_predicted_open_2d
     }
 
 # --- 全銘柄の分析処理を一括キャッシュ（24時間保持） ---
@@ -332,8 +338,11 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134):
                 "prev_pred_high": analysis["prev_pred_high"],
                 "pred_low": analysis["pred_low"],
                 "prev_pred_low": analysis["prev_pred_low"],
+                "pred_open_2d": analysis["pred_open_2d"],
+                "prev_pred_open_2d": analysis["prev_pred_open_2d"],
                 "pred_diff": analysis["pred_high"] - analysis["pred_low"],
                 "pred_diff_pct": (analysis["pred_high"] - analysis["pred_low"]) / current_price * 100 if current_price > 0 else 0,
+                "pred_open_2d_pct": (analysis["pred_open_2d"] - analysis["pred_open"]) / analysis["pred_open"] * 100 if analysis["pred_open"] > 0 else 0,
                 "df": df
             })
         progress_bar.progress((i + 1) / len(sorted_tickers))
@@ -442,11 +451,68 @@ if 'analysis_results' in st.session_state:
         st.info("現在、すべての厳選条件を満たす銘柄はありません。相場環境が変わるのをお待ちください。")
         
     st.divider()
+
+    # --- 厳選AIレコメンド銘柄（プチ株用）セクション ---
+    st.subheader("プチ株用 厳選AIレコメンド銘柄")
+    st.write("翌日の始値で買い、翌々日の始値で売るような短期トレード（プチ株など）に向いた銘柄をピックアップします。")
+    st.caption("【選定条件】・翌日始値→翌々日始値の上昇率がプラス ・1週間後＆翌々日の上昇確率50%超 ・翌日の上昇確率と予測終値の方向が一致 ・AI予測誤差3%未満")
     
+    recommended_stocks_petit = []
+    for stock in results:
+        # 条件1: 1週間後上昇確率が高い (50%超)
+        cond1 = stock['score_1w'] > 50
+        # 条件2: 翌々日の上昇確率が高い (50%超)
+        cond2 = stock['score_2d'] > 50
+        # 条件3: 「翌日の上昇確率が高いかつ予測終値が現在より高い」または「翌日の上昇確率が低いかつ予測終値が現在より低い」
+        cond3_up = (stock['score'] > 50) and (stock['pred_close'] > stock['price'])
+        cond3_down = (stock['score'] <= 50) and (stock['pred_close'] <= stock['price'])
+        cond3 = cond3_up or cond3_down
+        # 条件4: 直近の予測の答え合わせの誤差が少ない (誤差率3%未満)
+        error_rate = abs(stock['price'] - stock['prev_pred_close']) / stock['price'] * 100 if stock['price'] > 0 else 100
+        cond4 = error_rate < 3.0
+        # 条件5: 翌日始値から翌々日の始値の上昇率が高い (プラスであること)
+        cond5_petit = stock['pred_open_2d_pct'] > 0
+        
+        if cond1 and cond2 and cond3 and cond4 and cond5_petit:
+            stock['recommend_score_petit'] = stock['pred_open_2d_pct']
+            stock['error_rate'] = error_rate
+            recommended_stocks_petit.append(stock)
+            
+    # 上昇率順にソートし、最大5社取得
+    recommended_stocks_petit = sorted(recommended_stocks_petit, key=lambda x: x['recommend_score_petit'], reverse=True)[:5]
+    
+    if len(recommended_stocks_petit) > 0:
+        rec_cols_petit = st.columns(len(recommended_stocks_petit))
+        for i, stock in enumerate(recommended_stocks_petit):
+            with rec_cols_petit[i]:
+                with st.container(border=True):
+                    st.markdown(f"**{stock['name']}**")
+                    st.caption(f"{stock['ticker']}")
+                    
+                    # RSIの表示と過熱感アラート
+                    if stock['current_rsi'] >= 70:
+                        rsi_color = "red"
+                        rsi_alert = " 過熱感注意"
+                    else:
+                        rsi_color = "gray"
+                        rsi_alert = ""
+                    st.markdown(f"<p style='color: {rsi_color}; font-size: 0.85em; font-weight: bold; margin-bottom: 5px;'>RSI: {stock['current_rsi']:.1f}%{rsi_alert}</p>", unsafe_allow_html=True)
+
+                    st.markdown(f"<p style='color: #e91e63; font-weight: bold; margin-bottom: 0px;'>始値上昇率: {stock['pred_open_2d_pct']:.1f}%</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: green; font-size: 0.8em; margin-bottom: 0px;'>1週間後上昇確率: {stock['score_1w']:.1f}%</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: gray; font-size: 0.8em; margin-bottom: 0px;'>予測誤差: {stock['error_rate']:.1f}%</p>", unsafe_allow_html=True)
+                    st.markdown("---")
+                    st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px;'><b>予測 ({stock['next_date']})</b><br>始値: ¥{stock['pred_open']:,.0f}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px; margin-top: 5px;'><b>予測 ({stock['two_days_later_date']})</b><br>始値: ¥{stock['pred_open_2d']:,.0f}</p>", unsafe_allow_html=True)
+    else:
+        st.info("現在、プチ株用の厳選条件を満たす銘柄はありません。")
+
+    st.divider()
+
     # --- ランキング切り替えUI ---
     sort_basis = st.radio(
         "ランキングの基準を選択:",
-        ("翌日予測ベース", "翌々日予測ベース", "1週間後予測ベース", "翌日変動幅(%)予測ベース"),
+        ("翌日予測ベース", "翌々日予測ベース", "1週間後予測ベース", "翌日変動幅(%)予測ベース", "翌日始値→翌々日始値上昇率ベース"),
         horizontal=True
     )
     
@@ -456,8 +522,10 @@ if 'analysis_results' in st.session_state:
         sort_key = 'score_2d'
     elif sort_basis == "1週間後予測ベース":
         sort_key = 'score_1w'
-    else:
+    elif sort_basis == "翌日変動幅(%)予測ベース":
         sort_key = 'pred_diff_pct'
+    else:
+        sort_key = 'pred_open_2d_pct'
         
     results_sorted = sorted(results, key=lambda x: x[sort_key], reverse=True)
     
@@ -466,6 +534,8 @@ if 'analysis_results' in st.session_state:
     with col_up:
         if sort_basis == "翌日変動幅(%)予測ベース":
             st.subheader(f"価格変動幅(大) トップ10")
+        elif sort_basis == "翌日始値→翌々日始値上昇率ベース":
+            st.subheader(f"翌日始値→翌々日始値上昇率 トップ10")
         else:
             st.subheader(f"上昇期待度 トップ10 ({sort_basis})")
             
@@ -487,16 +557,22 @@ if 'analysis_results' in st.session_state:
                     st.markdown(f"<h3 style='color: green; margin-top: -10px; margin-bottom: 0px;'>1週間後({stock['week_later_date']})上昇確率: {stock['score_1w']:.1f}%</h3>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: #2e7d32; font-weight: bold; margin-bottom: 0px;'>翌日上昇確率: {stock['score']:.1f}%</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: #2e7d32; font-weight: bold;'>翌々日({stock['two_days_later_date']})上昇確率: {stock['score_2d']:.1f}%</p>", unsafe_allow_html=True)
-                else:
+                elif sort_basis == "翌日変動幅(%)予測ベース":
                     st.markdown(f"<h3 style='color: orange; margin-top: -10px; margin-bottom: 0px;'>予測変動幅: {stock['pred_diff_pct']:.1f}% (¥{stock['pred_diff']:,.0f})</h3>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: #2e7d32; font-weight: bold; margin-bottom: 0px;'>翌日上昇確率: {stock['score']:.1f}%</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: #2e7d32; font-weight: bold;'>翌々日({stock['two_days_later_date']})上昇確率: {stock['score_2d']:.1f}%</p>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<h3 style='color: #e91e63; margin-top: -10px; margin-bottom: 0px;'>始値上昇率: {stock['pred_open_2d_pct']:.1f}%</h3>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: #2e7d32; font-weight: bold; margin-bottom: 0px;'>翌日始値予測: ¥{stock['pred_open']:,.0f}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: #2e7d32; font-weight: bold;'>翌々日始値予測: ¥{stock['pred_open_2d']:,.0f}</p>", unsafe_allow_html=True)
                     
                 st.markdown(f"**{stock['next_date']} 予測**<br>終値: **¥{stock['pred_close']:,.0f}** | 始値: **¥{stock['pred_open']:,.0f}** | 高値: **¥{stock['pred_high']:,.0f}** | 安値: **¥{stock['pred_low']:,.0f}**", unsafe_allow_html=True)
 
     with col_down:
         if sort_basis == "翌日変動幅(%)予測ベース":
             st.subheader(f"価格変動幅(小) ワースト10")
+        elif sort_basis == "翌日始値→翌々日始値上昇率ベース":
+            st.subheader(f"翌日始値→翌々日始値上昇率 ワースト10")
         else:
             st.subheader(f"下落警戒 ワースト10 ({sort_basis})")
             
@@ -522,10 +598,14 @@ if 'analysis_results' in st.session_state:
                     st.markdown(f"<h3 style='color: red; margin-top: -10px; margin-bottom: 0px;'>1週間後({stock['week_later_date']})下落確率: {down_prob_1w:.1f}%</h3>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: #c62828; font-weight: bold; margin-bottom: 0px;'>翌日下落確率: {down_prob:.1f}%</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: #c62828; font-weight: bold;'>翌々日({stock['two_days_later_date']})下落確率: {down_prob_2d:.1f}%</p>", unsafe_allow_html=True)
-                else:
+                elif sort_basis == "翌日変動幅(%)予測ベース":
                     st.markdown(f"<h3 style='color: orange; margin-top: -10px; margin-bottom: 0px;'>予測変動幅: {stock['pred_diff_pct']:.1f}% (¥{stock['pred_diff']:,.0f})</h3>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: #c62828; font-weight: bold; margin-bottom: 0px;'>翌日下落確率: {down_prob:.1f}%</p>", unsafe_allow_html=True)
                     st.markdown(f"<p style='color: #c62828; font-weight: bold;'>翌々日({stock['two_days_later_date']})下落確率: {down_prob_2d:.1f}%</p>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<h3 style='color: blue; margin-top: -10px; margin-bottom: 0px;'>始値上昇率: {stock['pred_open_2d_pct']:.1f}%</h3>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: #c62828; font-weight: bold; margin-bottom: 0px;'>翌日始値予測: ¥{stock['pred_open']:,.0f}</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: #c62828; font-weight: bold;'>翌々日始値予測: ¥{stock['pred_open_2d']:,.0f}</p>", unsafe_allow_html=True)
                     
                 st.markdown(f"**{stock['next_date']} 予測**<br>終値: **¥{stock['pred_close']:,.0f}** | 始値: **¥{stock['pred_open']:,.0f}** | 高値: **¥{stock['pred_high']:,.0f}** | 安値: **¥{stock['pred_low']:,.0f}**", unsafe_allow_html=True)
 
@@ -569,7 +649,9 @@ if 'analysis_results' in st.session_state:
             f"- 終値: **¥{selected_stock['pred_close']:,.0f}** (現在 ¥{selected_stock['price']:,.0f})\n"
             f"- 始値: **¥{selected_stock['pred_open']:,.0f}** (現在 ¥{selected_stock['open']:,.0f})\n"
             f"- 高値: **¥{selected_stock['pred_high']:,.0f}** (現在 ¥{selected_stock['high']:,.0f})\n"
-            f"- 安値: **¥{selected_stock['pred_low']:,.0f}** (現在 ¥{selected_stock['low']:,.0f})")
+            f"- 安値: **¥{selected_stock['pred_low']:,.0f}** (現在 ¥{selected_stock['low']:,.0f})\n\n"
+            f"**{selected_stock['two_days_later_date']} のAI予測価格:**\n"
+            f"- 始値: **¥{selected_stock['pred_open_2d']:,.0f}** (翌日始値からの上昇率: {selected_stock['pred_open_2d_pct']:.1f}%)")
     
     # --- 直近の予測の答え合わせ表示 ---
     st.markdown("### 直近の予測の答え合わせ（翌日予測）")
