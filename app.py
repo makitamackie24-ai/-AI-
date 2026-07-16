@@ -2,6 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import time  # 処理時間計測のために追加
 from datetime import datetime, timedelta
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 import plotly.graph_objects as go
@@ -13,7 +14,7 @@ st.set_page_config(
 )
 
 st.title("日本株 AIトレンド予測＆レコメンドエンジン")
-st.write("過去の株価データからテクニカル指標を計算し、機械学習（ランダムフォレスト）を用いて翌日、翌々日（2営業日後）、および1週間後（5営業日後）の株価が上昇する確率と、各価格を予測します。")
+st.write("過去の株価データからテクニカル指標を計算し、機械学習（ランダムフォレスト）を用いて1週間後（5営業日後）の株価トレンドと各価格を予測します。")
 
 # --- 分析対象の銘柄リスト ---
 TARGET_STOCKS = {
@@ -124,6 +125,7 @@ TARGET_STOCKS = {
 
 stock_count = len(TARGET_STOCKS)
 
+# --- テクニカル指標の計算関数 ---
 def add_technical_indicators(df):
     df['SMA_5'] = df['Close'].rolling(window=5).mean()
     df['SMA_25'] = df['Close'].rolling(window=25).mean()
@@ -142,6 +144,7 @@ def add_technical_indicators(df):
 
     return df
 
+# --- モデル学習関数 ---
 def analyze_stock_data(df, n_estimators=100):
     if len(df) < 50:
         return None
@@ -181,16 +184,18 @@ def analyze_stock_data(df, n_estimators=100):
         "pred_close_1w": predicted_close_1w
     }
 
+# --- 全銘柄の分析処理を一括キャッシュ（24時間保持） ---
 @st.cache_data(ttl=86400, show_spinner=False)
 def generate_all_results(years=3.0, n_estimators=100, top_n=134):
     results = []
     progress_bar = st.progress(0)
+    time_text = st.empty()  # 残り時間表示用の領域を作成
     
     tickers = list(TARGET_STOCKS.keys())
     end_date = datetime.today()
     start_date = end_date - timedelta(days=int(365 * years))
     
-    # 全銘柄のデータを一括ダウンロード
+    # 全銘柄のデータを一括ダウンロード（通信回数を1回に減らし高速化）
     df_all = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', threads=True, progress=False)
     
     # --- 売買代金の計算と上位抽出 ---
@@ -225,10 +230,14 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134):
     sorted_tickers = sorted(valid_tickers, key=lambda x: trading_values[x]['value'], reverse=True)[:top_n]
     
     # --- 抽出された上位企業のみを解析 ---
+    start_time = time.time()
+    total_tickers = len(sorted_tickers)
+    
     for i, ticker in enumerate(sorted_tickers):
         name = TARGET_STOCKS[ticker]
         df_ticker = trading_values[ticker]['df']
             
+        # 木の数を渡して分析実行
         analysis = analyze_stock_data(df_ticker, n_estimators=n_estimators)
         
         if analysis is not None:
@@ -271,18 +280,32 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134):
                 "pred_close_1w_pct": (analysis["pred_close_1w"] - current_price) / current_price * 100 if current_price > 0 else 0,
                 "df": df
             })
-        progress_bar.progress((i + 1) / len(sorted_tickers))
+            
+        # 進捗と残り時間の計算と表示
+        processed_count = i + 1
+        elapsed_time = time.time() - start_time
+        avg_time_per_ticker = elapsed_time / processed_count
+        est_remaining_time = avg_time_per_ticker * (total_tickers - processed_count)
         
+        time_text.text(f"AIモデル学習中... 残り時間: 約 {int(est_remaining_time)} 秒 ({processed_count}/{total_tickers}社完了)")
+        progress_bar.progress(processed_count / total_tickers)
+        
+    time_text.empty()
     progress_bar.empty()
     return results
 
+# --- メイン処理 ---
 st.markdown("### 分析設定")
-top_n = st.slider(f"解析対象とする売買代金上位の企業数を選択 (最大{stock_count}社)", min_value=10, max_value=stock_count, value=150, step=10, help="全銘柄から直近の売買代金が多い企業を自動選出し、AI解析の対象を絞ります。数を減らすと計算時間が短縮されます。")
+col_setting1, col_setting2 = st.columns(2)
+with col_setting1:
+    top_n = st.slider(f"解析対象とする売買代金上位の企業数を選択 (最大{stock_count}社)", min_value=10, max_value=stock_count, value=150, step=10, help="全銘柄から直近の売買代金が多い企業を自動選出し、AI解析の対象を絞ります。数を減らすと計算時間が短縮されます。")
+with col_setting2:
+    n_estimators = st.slider("AIモデルの木の本数 (10〜500本)", min_value=10, max_value=500, value=100, step=10, help="本数を増やすと予測が安定しますが、計算時間が長くなります。じっくり詳細分析したい時に500本をお試しください。")
 
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    run_btn = st.button("AI分析を実行 / 結果を表示", type="primary", help="高精度な詳細分析（約3年分のデータ・木100本）を行います。")
+    run_btn = st.button("AI分析を実行 / 結果を表示", type="primary", help="設定された企業数・木の本数で詳細分析を行います。")
 with col2:
     clear_btn = st.button("データを更新して再計算 (キャッシュクリア)")
 
@@ -296,14 +319,14 @@ if clear_btn:
 # 実行ボタンが押された場合の処理
 if run_btn:
     years = 3.0
-    n_estimators = 100
     
-    with st.spinner(f"対象全社のデータを取得し、売買代金上位{top_n}社をAIモデルで詳細分析中...\n（計算済みの場合は一瞬で表示されます）"):
+    with st.spinner(f"対象全社のデータを取得し、売買代金上位{top_n}社をAIモデルで詳細分析中（木の本数: {n_estimators}本）...\n（計算済みの場合は一瞬で表示されます）"):
         results = generate_all_results(years=years, n_estimators=n_estimators, top_n=top_n)
         results_sorted = sorted(results, key=lambda x: x['score_1w'], reverse=True)
         st.session_state['analysis_results'] = results_sorted
         st.success(f"売買代金上位 {len(results)}社の詳細分析が完了（またはキャッシュから取得）しました！")
 
+# --- 結果の表示 ---
 if 'analysis_results' in st.session_state:
     results = st.session_state['analysis_results']
     
