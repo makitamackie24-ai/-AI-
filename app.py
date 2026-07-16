@@ -155,6 +155,8 @@ def analyze_stock_data(df, n_estimators=100):
     df['Target_Class_1W'] = (df['Close'].shift(-5) > df['Close']).astype(int)
     df['Target_Reg_1W'] = df['Close'].shift(-5)
     
+    # 無限大(inf)をNaNに変換してから削除（出来高0などで発生するエラーを回避）
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df_clean = df.dropna()
     
     features = ['Close', 'Volume', 'SMA_5', 'SMA_25', 'Return', 'RSI', 'Volatility', 'Vol_Change']
