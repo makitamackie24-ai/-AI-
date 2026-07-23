@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 st.title("日本株 AIトレンド予測＆レコメンドエンジン")
-st.write("過去の株価データからテクニカル指標を計算し、機械学習（ランダムフォレスト）を用いて「5日以内に-5%の損切りに触れず、+10%の利確に到達する確率」を予測します。")
+st.write("過去の株価データからテクニカル指標を計算し、機械学習（ランダムフォレスト）を用いて、あなたが設定したエグジットルールを達成する確率を予測します。")
 
 # --- 分析対象の銘柄リスト ---
 TARGET_STOCKS = {
@@ -145,7 +145,7 @@ def add_technical_indicators(df):
     return df
 
 # --- モデル学習関数 ---
-def analyze_stock_data(df, n_estimators=100):
+def analyze_stock_data(df, n_estimators=100, holding_period=5, profit_target_pct=10.0, stop_loss_pct=-5.0):
     if len(df) < 50:
         return None
     
@@ -155,21 +155,19 @@ def analyze_stock_data(df, n_estimators=100):
     df = add_technical_indicators(df)
     
     # --- 実践的なエグジットルールに基づく目的変数の作成 ---
-    # ルール: 5営業日以内に、-5%（損切り）に触れることなく、+10%（利確）に到達するか？
     
     target_class = []
     
-    # 最後の5日間は「5日後の未来」がないため判定できず、学習データから外す
     for i in range(len(df)):
-        if i >= len(df) - 5:
+        if i >= len(df) - holding_period:
             target_class.append(np.nan)
             continue
             
         current_close = df['Close'].iloc[i]
         success = 0 # デフォルトは失敗(0)
         
-        # 翌日から5日間の動きをシミュレーション
-        for j in range(1, 6):
+        # 指定期間の動きをシミュレーション
+        for j in range(1, holding_period + 1):
             future_high = df['High'].iloc[i + j]
             future_low = df['Low'].iloc[i + j]
             
@@ -178,11 +176,11 @@ def analyze_stock_data(df, n_estimators=100):
             low_pct = (future_low - current_close) / current_close * 100 if current_close > 0 else 0
             
             # ルール判定
-            if low_pct <= -5.0:
-                # 10%到達より先に-5%の損切りに触れた場合、失敗(0)としてループを抜ける
+            if low_pct <= stop_loss_pct:
+                # 損切りに触れた場合、失敗(0)としてループを抜ける
                 break 
-            elif high_pct >= 10.0:
-                # -5%に触れる前に10%の利確に到達した場合、成功(1)としてループを抜ける
+            elif high_pct >= profit_target_pct:
+                # 損切りに触れる前に利確に到達した場合、成功(1)としてループを抜ける
                 success = 1
                 break
                 
@@ -222,7 +220,7 @@ def analyze_stock_data(df, n_estimators=100):
 
 # --- 全銘柄の分析処理を一括キャッシュ（24時間保持） ---
 @st.cache_data(ttl=86400, show_spinner=False)
-def generate_all_results(years=3.0, n_estimators=100, top_n=134):
+def generate_all_results(years=3.0, n_estimators=100, top_n=134, holding_period=5, profit_target_pct=10.0, stop_loss_pct=-5.0):
     results = []
     progress_bar = st.progress(0)
     time_text = st.empty()  # 残り時間表示用の領域を作成
@@ -274,7 +272,7 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134):
         df_ticker = trading_values[ticker]['df']
             
         # 木の数を渡して分析実行
-        analysis = analyze_stock_data(df_ticker, n_estimators=n_estimators)
+        analysis = analyze_stock_data(df_ticker, n_estimators=n_estimators, holding_period=holding_period, profit_target_pct=profit_target_pct, stop_loss_pct=stop_loss_pct)
         
         if analysis is not None:
             df = analysis["df"]
@@ -327,7 +325,17 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134):
     return results
 
 # --- メイン処理 ---
-st.markdown("### 分析設定")
+st.markdown("### エグジットルール設定 (AIの学習目標)")
+st.write("この条件を満たす確率をAIが学習・予測します。ルールを変更するとAIがゼロから学習し直します。")
+col_rule1, col_rule2, col_rule3 = st.columns(3)
+with col_rule1:
+    holding_period = st.number_input("判定期間（営業日）", min_value=1, max_value=60, value=5, step=1, help="何日以内に条件を達成するか設定します。")
+with col_rule2:
+    profit_target_pct = st.number_input("利確ライン（%）", min_value=1.0, max_value=100.0, value=10.0, step=1.0, help="株価が何%上昇したら利益確定するか設定します。")
+with col_rule3:
+    stop_loss_pct = st.number_input("損切りライン（%）", min_value=-50.0, max_value=-1.0, value=-5.0, step=1.0, help="株価が何%下落したら損切りするか設定します（マイナスで入力）。")
+
+st.markdown("### 分析詳細設定")
 col_setting1, col_setting2 = st.columns(2)
 with col_setting1:
     top_n = st.slider(f"解析対象とする売買代金上位の企業数を選択 (最大{stock_count}社)", min_value=10, max_value=stock_count, value=150, step=10, help="全銘柄から直近の売買代金が多い企業を自動選出し、AI解析の対象を絞ります。数を減らすと計算時間が短縮されます。")
@@ -337,7 +345,7 @@ with col_setting2:
 col1, col2 = st.columns([1, 2])
 
 with col1:
-    run_btn = st.button("AI分析を実行 / 結果を表示", type="primary", help="設定された企業数・木の本数で詳細分析を行います。")
+    run_btn = st.button("AI分析を実行 / 結果を表示", type="primary", help="設定されたルール・企業数・木の本数で詳細分析を行います。")
 with col2:
     clear_btn = st.button("データを更新して再計算 (キャッシュクリア)")
 
@@ -353,7 +361,7 @@ if run_btn:
     years = 3.0
     
     with st.spinner(f"対象全社のデータを取得し、売買代金上位{top_n}社をAIモデルで詳細分析中（木の本数: {n_estimators}本）...\n（計算済みの場合は一瞬で表示されます）"):
-        results = generate_all_results(years=years, n_estimators=n_estimators, top_n=top_n)
+        results = generate_all_results(years=years, n_estimators=n_estimators, top_n=top_n, holding_period=holding_period, profit_target_pct=profit_target_pct, stop_loss_pct=stop_loss_pct)
         results_sorted = sorted(results, key=lambda x: x['score_rule'], reverse=True)
         st.session_state['analysis_results'] = results_sorted
         st.success(f"売買代金上位 {len(results)}社の詳細分析が完了（またはキャッシュから取得）しました！")
@@ -368,7 +376,7 @@ if 'analysis_results' in st.session_state:
     max_price = st.number_input("予算上限：1株あたりの価格（円）を設定してください", min_value=100, max_value=150000, value=5000, step=100, help="指定した金額以下の銘柄のみをレコメンドします。（例: 5000円 = 100株単位で50万円）")
     
     st.write("設定されたトレードルールを満たし、かつご指定の予算内に収まる有望銘柄をピックアップします。")
-    st.caption(f"【選定条件】・1株{max_price:,}円以下 ・5日以内に「-5%損切り」に触れず「+10%利確」を達成する確率が50%超")
+    st.caption(f"【選定条件】・1株{max_price:,}円以下 ・{holding_period}日以内に「{stop_loss_pct}%損切り」に触れず「+{profit_target_pct}%利確」を達成する確率が50%超")
     
     recommended_stocks = []
     for stock in results:
@@ -420,7 +428,7 @@ if 'analysis_results' in st.session_state:
     
     with col_up:
         st.subheader(f"条件達成 期待度 トップ10")
-        st.caption("5日以内に「-5%損切り」に触れず「+10%利確」を達成する確率が高い銘柄")
+        st.caption(f"{holding_period}日以内に「{stop_loss_pct}%損切り」に触れず「+{profit_target_pct}%利確」を達成する確率が高い銘柄")
             
         for i in range(min(10, len(results_sorted))):
             stock = results_sorted[i]
@@ -431,7 +439,7 @@ if 'analysis_results' in st.session_state:
 
     with col_down:
         st.subheader(f"条件達成 困難 ワースト10")
-        st.caption("利確よりも先に損切りにかかる、または5日間動きがない確率が高い銘柄")
+        st.caption("利確よりも先に損切りにかかる、または期間内に動きがない確率が高い銘柄")
             
         for i in range(min(10, len(results_sorted))):
             stock = results_sorted[-(i+1)]
@@ -472,5 +480,5 @@ if 'analysis_results' in st.session_state:
     
     failure_prob = 100 - selected_stock['score_rule']
     st.info(f"**AIの分析 ({selected_name})**:\n\n"
-            f"**【ルールベース判定】** 5営業日以内に-5%の損切りに触れず、+10%の利確に到達する確率: **{selected_stock['score_rule']:.1f}%** (失敗する確率: **{failure_prob:.1f}%**)\n\n"
+            f"**【ルールベース判定】** {holding_period}営業日以内に{stop_loss_pct}%の損切りに触れず、+{profit_target_pct}%の利確に到達する確率: **{selected_stock['score_rule']:.1f}%** (失敗する確率: **{failure_prob:.1f}%**)\n\n"
             f"※この確率は、過去3年間の値動きパターン（テクニカル指標）からランダムフォレストが算出した期待値です。")
