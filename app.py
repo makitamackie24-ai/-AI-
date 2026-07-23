@@ -2,9 +2,9 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import time  # 処理時間計測のために追加
+import time
 from datetime import datetime, timedelta
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier
 import plotly.graph_objects as go
 
 # --- ページ設定 ---
@@ -14,7 +14,7 @@ st.set_page_config(
 )
 
 st.title("日本株 AIトレンド予測＆レコメンドエンジン")
-st.write("過去の株価データからテクニカル指標を計算し、機械学習（ランダムフォレスト）を用いて1週間後（5営業日後）の株価トレンドと各価格を予測します。")
+st.write("過去の株価データからテクニカル指標を計算し、機械学習（ランダムフォレスト）を用いて「5日以内に-5%の損切りに触れず、+10%の利確に到達する確率」を予測します。")
 
 # --- 分析対象の銘柄リスト ---
 TARGET_STOCKS = {
@@ -154,34 +154,70 @@ def analyze_stock_data(df, n_estimators=100):
         
     df = add_technical_indicators(df)
     
-    # 目的変数（1週間後の予測のみに絞り、計算量を削減）
-    df['Target_Class_1W'] = (df['Close'].shift(-5) > df['Close']).astype(int)
-    df['Target_Reg_1W'] = df['Close'].shift(-5)
+    # --- 実践的なエグジットルールに基づく目的変数の作成 ---
+    # ルール: 5営業日以内に、-5%（損切り）に触れることなく、+10%（利確）に到達するか？
+    
+    target_class = []
+    
+    # 最後の5日間は「5日後の未来」がないため判定できず、学習データから外す
+    for i in range(len(df)):
+        if i >= len(df) - 5:
+            target_class.append(np.nan)
+            continue
+            
+        current_close = df['Close'].iloc[i]
+        success = 0 # デフォルトは失敗(0)
+        
+        # 翌日から5日間の動きをシミュレーション
+        for j in range(1, 6):
+            future_high = df['High'].iloc[i + j]
+            future_low = df['Low'].iloc[i + j]
+            
+            # 現在値に対する変動率を計算
+            high_pct = (future_high - current_close) / current_close * 100 if current_close > 0 else 0
+            low_pct = (future_low - current_close) / current_close * 100 if current_close > 0 else 0
+            
+            # ルール判定
+            if low_pct <= -5.0:
+                # 10%到達より先に-5%の損切りに触れた場合、失敗(0)としてループを抜ける
+                break 
+            elif high_pct >= 10.0:
+                # -5%に触れる前に10%の利確に到達した場合、成功(1)としてループを抜ける
+                success = 1
+                break
+                
+        target_class.append(success)
+        
+    df['Target_Class_Rule'] = target_class
     
     # 無限大(inf)をNaNに変換してから削除（出来高0などで発生するエラーを回避）
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
-    df_clean = df.dropna()
+    
+    # 目的変数がNaNの行（直近5日分など）を削除し、学習データを作成
+    df_clean = df.dropna(subset=['Target_Class_Rule'] + ['Close', 'Volume', 'SMA_5', 'SMA_25', 'Return', 'RSI', 'Volatility', 'Vol_Change'])
     
     features = ['Close', 'Volume', 'SMA_5', 'SMA_25', 'Return', 'RSI', 'Volatility', 'Vol_Change']
     X = df_clean[features]
     
-    # モデルの構築と学習 (モデル数を8個から2個に減らし高速化)
-    model_class_1w = RandomForestClassifier(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Class_1W'])
-    model_reg_1w = RandomForestRegressor(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Reg_1W'])
+    # 1クラスしかない場合（例：過去すべて失敗）はエラーになるため回避
+    if len(df_clean['Target_Class_Rule'].unique()) < 2:
+        return None
     
+    # モデルの構築と学習 (分類モデル1つのみ)
+    model_class = RandomForestClassifier(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Class_Rule'])
+    
+    # 予測は「直近の最新データ」に対して行う
     latest_data = df.iloc[-1:][features]
     
     if latest_data.isnull().values.any():
          return None
          
-    # 予測の実行
-    prediction_proba_1w = model_class_1w.predict_proba(latest_data)[0][1]
-    predicted_close_1w = model_reg_1w.predict(latest_data)[0]
+    # 予測の実行 (条件をクリアする確率)
+    prediction_proba = model_class.predict_proba(latest_data)[0][1]
     
     return {
         "df": df,
-        "proba_1w": prediction_proba_1w,
-        "pred_close_1w": predicted_close_1w
+        "proba_rule": prediction_proba
     }
 
 # --- 全銘柄の分析処理を一括キャッシュ（24時間保持） ---
@@ -257,9 +293,8 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134):
             vol_5d_avg = get_val(df['Volume'].rolling(window=5).mean().iloc[-1])
             current_rsi = get_val(df['RSI'].iloc[-1])
             
-            # 対象日付の計算
+            # 対象日付
             latest_date_dt = df.index[-1]
-            week_later_dt = latest_date_dt + pd.offsets.BDay(5)
             
             results.append({
                 "ticker": ticker,
@@ -274,10 +309,7 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134):
                 "vol_5d_avg": vol_5d_avg,
                 "current_rsi": current_rsi,
                 "latest_date": latest_date_dt.strftime('%Y/%m/%d'),
-                "week_later_date": week_later_dt.strftime('%Y/%m/%d'),
-                "score_1w": analysis["proba_1w"] * 100,
-                "pred_close_1w": analysis["pred_close_1w"],
-                "pred_close_1w_pct": (analysis["pred_close_1w"] - current_price) / current_price * 100 if current_price > 0 else 0,
+                "score_rule": analysis["proba_rule"] * 100,
                 "df": df
             })
             
@@ -322,7 +354,7 @@ if run_btn:
     
     with st.spinner(f"対象全社のデータを取得し、売買代金上位{top_n}社をAIモデルで詳細分析中（木の本数: {n_estimators}本）...\n（計算済みの場合は一瞬で表示されます）"):
         results = generate_all_results(years=years, n_estimators=n_estimators, top_n=top_n)
-        results_sorted = sorted(results, key=lambda x: x['score_1w'], reverse=True)
+        results_sorted = sorted(results, key=lambda x: x['score_rule'], reverse=True)
         st.session_state['analysis_results'] = results_sorted
         st.success(f"売買代金上位 {len(results)}社の詳細分析が完了（またはキャッシュから取得）しました！")
 
@@ -331,22 +363,20 @@ if 'analysis_results' in st.session_state:
     results = st.session_state['analysis_results']
     
     # --- 厳選AIレコメンドセクション ---
-    st.subheader("厳選AIレコメンド銘柄 (1週間後予測特化)")
+    st.subheader("厳選AIレコメンド銘柄 (ルールベース特化)")
     
     max_price = st.number_input("予算上限：1株あたりの価格（円）を設定してください", min_value=100, max_value=150000, value=5000, step=100, help="指定した金額以下の銘柄のみをレコメンドします。（例: 5000円 = 100株単位で50万円）")
     
-    st.write("設定された厳しい条件（中期の上昇期待、ご指定の予算内）をすべてクリアした有望銘柄をピックアップします。")
-    st.caption(f"【選定条件】・1株{max_price:,}円以下 ・1週間後の予測終値が現在値より10%以上高い ・1週間後の上昇確率50%超")
+    st.write("設定されたトレードルールを満たし、かつご指定の予算内に収まる有望銘柄をピックアップします。")
+    st.caption(f"【選定条件】・1株{max_price:,}円以下 ・5日以内に「-5%損切り」に触れず「+10%利確」を達成する確率が50%超")
     
     recommended_stocks = []
     for stock in results:
         cond0 = stock['price'] <= max_price
-        cond1 = stock['score_1w'] > 50
-        cond2 = stock['pred_close_1w_pct'] >= 10.0
+        cond1 = stock['score_rule'] > 50
         
-        if cond0 and cond1 and cond2:
-            total_score = stock['pred_close_1w_pct'] + stock['score_1w']
-            stock['recommend_score'] = total_score
+        if cond0 and cond1:
+            stock['recommend_score'] = stock['score_rule']
             recommended_stocks.append(stock)
             
     recommended_stocks = sorted(recommended_stocks, key=lambda x: x['recommend_score'], reverse=True)[:5]
@@ -375,74 +405,42 @@ if 'analysis_results' in st.session_state:
                     if alerts:
                         st.markdown(f"<p style='color: red; font-size: 0.85em; font-weight: bold; margin-top: -5px; margin-bottom: 5px;'>注意: {' / '.join(alerts)}</p>", unsafe_allow_html=True)
 
-                    st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>1週間後上昇確率: {stock['score_1w']:.1f}%</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='color: orange; font-weight: bold; margin-bottom: 0px;'>1週間後予測上昇率: {stock['pred_close_1w_pct']:.1f}%</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>条件達成確率: {stock['score_rule']:.1f}%</p>", unsafe_allow_html=True)
                     st.markdown("---")
                     st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px;'><b>直近 ({stock['latest_date']})</b><br>終値: ¥{stock['price']:,.0f} | 始値: ¥{stock['open']:,.0f}<br>高値: ¥{stock['high']:,.0f} | 安値: ¥{stock['low']:,.0f}</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px; margin-top: 5px;'><b>予測 ({stock['week_later_date']})</b><br>終値: ¥{stock['pred_close_1w']:,.0f}</p>", unsafe_allow_html=True)
     else:
-        st.info("現在、すべての厳選条件を満たす銘柄はありません。相場環境が変わるのをお待ちください。")
+        st.info("現在、設定された厳しいルール条件（勝率50%超）を満たす銘柄はありません。相場環境が変わるのをお待ちください。")
         
     st.divider()
-
-    sort_basis = st.radio(
-        "ランキングの基準を選択:",
-        ("1週間後上昇確率ベース", "1週間後予測上昇率(%)ベース"),
-        horizontal=True
-    )
     
-    if sort_basis == "1週間後上昇確率ベース":
-        sort_key = 'score_1w'
-    else:
-        sort_key = 'pred_close_1w_pct'
-        
-    results_sorted = sorted(results, key=lambda x: x[sort_key], reverse=True)
+    # ランキングソート（確率が高い順）
+    results_sorted = sorted(results, key=lambda x: x['score_rule'], reverse=True)
     
     col_up, col_down = st.columns(2)
     
     with col_up:
-        if sort_basis == "1週間後予測上昇率(%)ベース":
-            st.subheader(f"1週間後 上昇率予測 トップ10")
-        else:
-            st.subheader(f"1週間後 上昇期待度 トップ10")
+        st.subheader(f"条件達成 期待度 トップ10")
+        st.caption("5日以内に「-5%損切り」に触れず「+10%利確」を達成する確率が高い銘柄")
             
         for i in range(min(10, len(results_sorted))):
             stock = results_sorted[i]
             with st.container(border=True):
                 st.markdown(f"**第{i+1}位: {stock['name']}**")
                 st.caption(f"{stock['ticker']} | {stock['latest_date']} 終値: ¥{stock['price']:,.0f} (始値: ¥{stock['open']:,.0f} / 高値: ¥{stock['high']:,.0f} / 安値: ¥{stock['low']:,.0f})")
-                
-                if sort_basis == "1週間後上昇確率ベース":
-                    st.markdown(f"<h3 style='color: green; margin-top: -10px; margin-bottom: 0px;'>1週間後({stock['week_later_date']})上昇確率: {stock['score_1w']:.1f}%</h3>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='color: orange; font-weight: bold; margin-bottom: 0px;'>予測上昇率: {stock['pred_close_1w_pct']:.1f}%</p>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<h3 style='color: orange; margin-top: -10px; margin-bottom: 0px;'>1週間後予測上昇率: {stock['pred_close_1w_pct']:.1f}%</h3>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='color: #2e7d32; font-weight: bold; margin-bottom: 0px;'>上昇確率: {stock['score_1w']:.1f}%</p>", unsafe_allow_html=True)
-                    
-                st.markdown(f"**{stock['week_later_date']} 予測**<br>終値: **¥{stock['pred_close_1w']:,.0f}**", unsafe_allow_html=True)
+                st.markdown(f"<h3 style='color: green; margin-top: -10px; margin-bottom: 0px;'>達成確率: {stock['score_rule']:.1f}%</h3>", unsafe_allow_html=True)
 
     with col_down:
-        if sort_basis == "1週間後予測上昇率(%)ベース":
-            st.subheader(f"1週間後 下落率予測 ワースト10")
-        else:
-            st.subheader(f"1週間後 下落警戒 ワースト10")
+        st.subheader(f"条件達成 困難 ワースト10")
+        st.caption("利確よりも先に損切りにかかる、または5日間動きがない確率が高い銘柄")
             
         for i in range(min(10, len(results_sorted))):
             stock = results_sorted[-(i+1)]
-            down_prob_1w = 100 - stock['score_1w']
+            failure_prob = 100 - stock['score_rule']
             
             with st.container(border=True):
                 st.markdown(f"**第{i+1}位: {stock['name']}**")
                 st.caption(f"{stock['ticker']} | {stock['latest_date']} 終値: ¥{stock['price']:,.0f} (始値: ¥{stock['open']:,.0f} / 高値: ¥{stock['high']:,.0f} / 安値: ¥{stock['low']:,.0f})")
-                
-                if sort_basis == "1週間後上昇確率ベース":
-                    st.markdown(f"<h3 style='color: red; margin-top: -10px; margin-bottom: 0px;'>1週間後({stock['week_later_date']})下落確率: {down_prob_1w:.1f}%</h3>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='color: orange; font-weight: bold; margin-bottom: 0px;'>予測変動率: {stock['pred_close_1w_pct']:.1f}%</p>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<h3 style='color: orange; margin-top: -10px; margin-bottom: 0px;'>1週間後予測変動率: {stock['pred_close_1w_pct']:.1f}%</h3>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='color: #c62828; font-weight: bold; margin-bottom: 0px;'>下落確率: {down_prob_1w:.1f}%</p>", unsafe_allow_html=True)
-                    
-                st.markdown(f"**{stock['week_later_date']} 予測**<br>終値: **¥{stock['pred_close_1w']:,.0f}**", unsafe_allow_html=True)
+                st.markdown(f"<h3 style='color: red; margin-top: -10px; margin-bottom: 0px;'>失敗確率: {failure_prob:.1f}%</h3>", unsafe_allow_html=True)
 
     st.divider()
     
@@ -472,8 +470,7 @@ if 'analysis_results' in st.session_state:
     
     st.plotly_chart(fig, use_container_width=True)
     
-    down_score_1w = 100 - selected_stock['score_1w']
+    failure_prob = 100 - selected_stock['score_rule']
     st.info(f"**AIの分析 ({selected_name})**:\n\n"
-            f"**【1週間後 ({selected_stock['week_later_date']}) のトレンド】** 上がる確率: **{selected_stock['score_1w']:.1f}%** / 下がる確率: **{down_score_1w:.1f}%**\n\n"
-            f"**{selected_stock['week_later_date']} のAI予測価格:**\n"
-            f"- 終値: **¥{selected_stock['pred_close_1w']:,.0f}** (現在価格からの上昇率: {selected_stock['pred_close_1w_pct']:.1f}%)")
+            f"**【ルールベース判定】** 5営業日以内に-5%の損切りに触れず、+10%の利確に到達する確率: **{selected_stock['score_rule']:.1f}%** (失敗する確率: **{failure_prob:.1f}%**)\n\n"
+            f"※この確率は、過去3年間の値動きパターン（テクニカル指標）からランダムフォレストが算出した期待値です。")
