@@ -559,21 +559,19 @@ if 'analysis_results' in st.session_state:
     
     if not sell_signals:
         st.success(f"現在、**{selected_name}** に目立った売りサインは点灯していません。トレンドは継続している可能性があります。")
-        action_text = "💡 **【推奨アクション: ホールド】** 現在のトレンドに乗ったまま、設定した利確・損切ライン（下記）での決済を待ちます。"
+        st.info("💡 **【推奨アクション: ホールド】** 現在のトレンドに乗ったまま、設定した利確・損切ライン（下記）での決済を待ちます。")
     else:
         st.warning(f"現在、**{len(sell_signals)}つ** の売り警戒サインが点灯しています。")
         for signal in sell_signals:
             st.markdown(f"- {signal}")
             
         if high_alert:
-            action_text = "🚨 **【推奨アクション: 即時撤退】** 中期トレンドの崩壊や大口の売りの兆候があります。**翌営業日の寄り付き（成行）**、または現在値付近での即時決済（損切り・利確）を強く推奨します。"
+            st.error("🚨 **【推奨アクション: 即時撤退】** 中期トレンドの崩壊や大口の売りの兆候があります。**翌営業日の寄り付き（成行）**、または現在値付近での即時決済（損切り・利確）を強く推奨します。")
         elif mid_alert:
             stop_level = current_sma_5
-            action_text = f"⚠️ **【推奨アクション: 逆指値の引き上げ】** 上値が重くなってきたサインです。利益を確保（または損失を最小化）するため、**5日移動平均線（約 ¥{stop_level:,.0f}）** や直近の安値を割ったら決済されるよう、逆指値注文を設定して様子を見ることをお勧めします。"
+            st.warning(f"⚠️ **【推奨アクション: 逆指値の引き上げ】** 上値が重くなってきたサインです。利益を確保（または損失を最小化）するため、**5日移動平均線（約 ¥{stop_level:,.0f}）** や直近の安値を割ったら決済されるよう、逆指値注文を設定して様子を見ることをお勧めします。")
         else:
-            action_text = "💡 **【推奨アクション: 警戒しつつホールド】** 短期的な調整の可能性がありますが、致命的なサインではありません。下記の損切りラインを厳守しつつ様子を見ます。"
-
-    st.markdown(f"<div style='background-color: #f0f2f6; padding: 15px; border-radius: 5px; margin-bottom: 15px; border-left: 5px solid #1976D2;'>{action_text}</div>", unsafe_allow_html=True)
+            st.info("💡 **【推奨アクション: 警戒しつつホールド】** 短期的な調整の可能性がありますが、致命的なサインではありません。下記の損切りラインを厳守しつつ様子を見ます。")
 
     # --- 売却目標株価の計算と表示 ---
     base_price = entry_price if entry_price > 0 else current_price
