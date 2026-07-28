@@ -415,7 +415,6 @@ if 'analysis_results' in st.session_state:
     st.write("設定されたトレードルールを満たし、かつご指定の予算内に収まる有望銘柄をピックアップします。")
     st.caption(f"【選定条件】・1株{max_price:,}円以下 ・75日移動平均線上(上昇トレンド) ・{holding_period}日以内に「{stop_loss_pct}%損切り」に触れず「+{profit_target_pct}%利確」を達成する確率が50%超")
     
-    with st.expander("💡 【備忘録】表示されるテクニカルアラートの読み解き方と活用法"):
     with st.expander("💡 【備忘録】表示されるテクニカルサインの読み解き方と活用法"):
         st.markdown("""
         各テクニカル指標には得意な相場と「ダマシ」のリスクがあります。単独で判断せず、**AIが算出した条件達成確率を主軸**とし、サインはサブ情報として活用するのが効果的です。
