@@ -540,16 +540,16 @@ if 'analysis_results' in st.session_state:
 
     sell_signals = []
     
-    if current_price < current_sma_5:
-        sell_signals.append("【短期警戒】 5日移動平均線を下回りました（短期的な上昇トレンドの一服）。")
     if current_price < current_sma_25:
-        sell_signals.append("【中期警戒】 25日移動平均線を下回りました（スイングトレードにおける手仕舞いの目安です）。")
-    if current_macd < current_macd_signal or current_macd < prev_macd:
-        sell_signals.append("【勢い低下】 MACDが下落傾向、またはデッドクロス圏にあります。")
-    if current_rsi < prev_rsi and prev_rsi >= 70:
-        sell_signals.append("【過熱からの調整】 RSIが過熱圏(70超)から下落に転じました。")
+        sell_signals.append("🚨 **【優先度: 高】 25日線を下回りました。**\n中期トレンドの崩壊を示唆します。スイングトレードにおいては、含み損拡大を防ぐための早急な手仕舞い（損切り・微益撤退）を強く推奨します。")
     if current_price < current_open and current_volume > vol_5d_avg:
-         sell_signals.append("【売り圧力】 平均より多い出来高を伴って下落（陰線）しています。")
+         sell_signals.append("🚨 **【優先度: 高】 大商いで陰線をつけています。**\n平均より多い出来高を伴って下落しています。大口投資家が売り抜けている可能性があり、急落リスクに警戒が必要です。")
+    if current_macd < current_macd_signal or current_macd < prev_macd:
+        sell_signals.append("⚠️ **【優先度: 中】 MACDが下落転換しました。**\n上昇の勢い（モメンタム）が低下しています。そろそろ上値が重くなる可能性があるため、利益確定の準備をおすすめします。")
+    if current_rsi < prev_rsi and prev_rsi >= 70:
+        sell_signals.append("⚠️ **【優先度: 中】 RSIが過熱圏(70超)から反落しました。**\n「買われすぎ」状態から実際に売りが出始めたサインです。短期的な天井を打った可能性があります。")
+    if current_price < current_sma_5:
+        sell_signals.append("💡 **【優先度: 低】 5日線を下回りました。**\n短期的な上昇トレンドの一服を示します。単独のサインであれば一時的なノイズの可能性もありますが、他の警戒サインと重なる場合は注意が必要です。")
 
     # --- 売りサイン結果表示 ---
     st.markdown(f"#### 💡 {selected_name} の手仕舞い（売り）サイン診断")
