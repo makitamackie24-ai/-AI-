@@ -303,8 +303,14 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134, holding_period=
             current_high = get_val(df['High'].iloc[-1])
             current_low = get_val(df['Low'].iloc[-1])
             
+            current_sma_5 = get_val(df['SMA_5'].iloc[-1])
             current_sma_25 = get_val(df['SMA_25'].iloc[-1])
             current_sma_75 = get_val(df['SMA_75'].iloc[-1])
+            current_macd = get_val(df['MACD'].iloc[-1])
+            current_macd_signal = get_val(df['MACD_Signal'].iloc[-1])
+            current_bb_mid = get_val(df['BB_Mid'].iloc[-1])
+            current_bb_std = get_val(df['BB_Std'].iloc[-1])
+            
             current_volume = get_val(df['Volume'].iloc[-1])
             vol_change = get_val(df['Vol_Change'].iloc[-1])
             vol_5d_avg = get_val(df['Volume'].rolling(window=5).mean().iloc[-1])
@@ -320,8 +326,13 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134, holding_period=
                 "open": current_open,
                 "high": current_high,
                 "low": current_low,
+                "current_sma_5": current_sma_5,
                 "current_sma_25": current_sma_25,
                 "current_sma_75": current_sma_75,
+                "current_macd": current_macd,
+                "current_macd_signal": current_macd_signal,
+                "current_bb_mid": current_bb_mid,
+                "current_bb_std": current_bb_std,
                 "current_volume": current_volume,
                 "vol_change": vol_change,
                 "vol_5d_avg": vol_5d_avg,
@@ -408,35 +419,52 @@ if 'analysis_results' in st.session_state:
             stock['recommend_score'] = stock['score_rule']
             recommended_stocks.append(stock)
             
-    recommended_stocks = sorted(recommended_stocks, key=lambda x: x['recommend_score'], reverse=True)[:5]
+    # 上限5個を撤廃し、全件を表示するよう変更
+    recommended_stocks = sorted(recommended_stocks, key=lambda x: x['recommend_score'], reverse=True)
     
     if len(recommended_stocks) > 0:
-        rec_cols = st.columns(len(recommended_stocks))
-        for i, stock in enumerate(recommended_stocks):
-            with rec_cols[i]:
-                with st.container(border=True):
-                    st.markdown(f"**{stock['name']}**")
-                    st.caption(f"{stock['ticker']}")
-                    
-                    if stock['current_rsi'] >= 70:
-                        rsi_color = "red"
-                        rsi_alert = " 過熱感注意"
-                    else:
-                        rsi_color = "gray"
-                        rsi_alert = ""
-                    st.markdown(f"<p style='color: {rsi_color}; font-size: 0.85em; font-weight: bold; margin-bottom: 5px;'>RSI: {stock['current_rsi']:.1f}%{rsi_alert}</p>", unsafe_allow_html=True)
+        # 3列ごとに折り返して表示するレイアウト
+        for i in range(0, len(recommended_stocks), 3):
+            rec_cols = st.columns(3)
+            for j in range(3):
+                if i + j < len(recommended_stocks):
+                    stock = recommended_stocks[i + j]
+                    with rec_cols[j]:
+                        with st.container(border=True):
+                            st.markdown(f"**{stock['name']}**")
+                            st.caption(f"{stock['ticker']}")
+                            
+                            # RSIの判定
+                            if stock['current_rsi'] >= 70:
+                                rsi_color = "red"
+                                rsi_alert = " (過熱感)"
+                            elif stock['current_rsi'] <= 30:
+                                rsi_color = "green"
+                                rsi_alert = " (売られすぎ)"
+                            else:
+                                rsi_color = "gray"
+                                rsi_alert = ""
+                            st.markdown(f"<p style='color: {rsi_color}; font-size: 0.85em; font-weight: bold; margin-bottom: 5px;'>RSI: {stock['current_rsi']:.1f}%{rsi_alert}</p>", unsafe_allow_html=True)
 
-                    alerts = []
-                    if stock['price'] < stock['current_sma_25']:
-                        alerts.append("25日線割れ")
-                    if stock['current_volume'] < stock['vol_5d_avg']:
-                        alerts.append("出来高低迷")
-                    if alerts:
-                        st.markdown(f"<p style='color: red; font-size: 0.85em; font-weight: bold; margin-top: -5px; margin-bottom: 5px;'>注意: {' / '.join(alerts)}</p>", unsafe_allow_html=True)
+                            # テクニカル指標の全網羅アラート
+                            alerts = []
+                            if stock['price'] < stock['current_sma_5']:
+                                alerts.append("5日線割れ")
+                            if stock['price'] < stock['current_sma_25']:
+                                alerts.append("25日線割れ")
+                            if stock['current_volume'] < stock['vol_5d_avg']:
+                                alerts.append("出来高低迷")
+                            if stock['current_macd'] < stock['current_macd_signal']:
+                                alerts.append("MACD下落傾向")
+                            if stock['price'] >= stock['current_bb_mid'] + (stock['current_bb_std'] * 2):
+                                alerts.append("+2σ超過(過熱)")
+                                
+                            if alerts:
+                                st.markdown(f"<p style='color: red; font-size: 0.8em; font-weight: bold; margin-top: -5px; margin-bottom: 5px; line-height: 1.2;'>注意: {' / '.join(alerts)}</p>", unsafe_allow_html=True)
 
-                    st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>条件達成確率: {stock['score_rule']:.1f}%</p>", unsafe_allow_html=True)
-                    st.markdown("---")
-                    st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px;'><b>直近 ({stock['latest_date']})</b><br>終値: ¥{stock['price']:,.0f} | 始値: ¥{stock['open']:,.0f}<br>高値: ¥{stock['high']:,.0f} | 安値: ¥{stock['low']:,.0f}</p>", unsafe_allow_html=True)
+                            st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>条件達成確率: {stock['score_rule']:.1f}%</p>", unsafe_allow_html=True)
+                            st.markdown("---")
+                            st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px;'><b>直近 ({stock['latest_date']})</b><br>終値: ¥{stock['price']:,.0f} | 始値: ¥{stock['open']:,.0f}<br>高値: ¥{stock['high']:,.0f} | 安値: ¥{stock['low']:,.0f}</p>", unsafe_allow_html=True)
     else:
         st.info("現在、設定された厳しいルール条件（勝率50%超）を満たす銘柄はありません。相場環境が変わるのをお待ちください。")
         
