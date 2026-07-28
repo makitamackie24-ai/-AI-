@@ -504,7 +504,7 @@ if 'analysis_results' in st.session_state:
                             stop_price = stock['price'] * (1 + stop_loss_pct / 100)
                             
                             st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px;'><b>直近 ({stock['latest_date']})</b><br>終値: ¥{stock['price']:,.0f} | 始値: ¥{stock['open']:,.0f}<br>高値: ¥{stock['high']:,.0f} | 安値: ¥{stock['low']:,.0f}</p>", unsafe_allow_html=True)
-                            st.markdown(f"<div style='font-size: 0.85em; margin-top: 5px; padding: 5px; border: 1px solid #ccc; border-radius: 5px;'><b>【エグジット目安 (現在値基準)】</b><br>🟢 利確 (+{profit_target_pct}%): <b>¥{target_price:,.0f}</b><br>🔴 損切 ({stop_loss_pct}%): <b>¥{stop_price:,.0f}</b></div>", unsafe_allow_html=True)
+                            st.markdown(f"<div style='font-size: 0.85em; margin-top: 5px; padding: 5px; border: 1px solid #ccc; border-radius: 5px;'><b>【AI予測の基準価格】</b><br>取得想定 (直近終値): <b>¥{stock['price']:,.0f}</b><br>🟢 利確目標 (+{profit_target_pct}%): <b>¥{target_price:,.0f}</b><br>🔴 損切目安 ({stop_loss_pct}%): <b>¥{stop_price:,.0f}</b></div>", unsafe_allow_html=True)
     else:
         st.info("現在、設定された厳しいルール条件（勝率50%超）を満たす銘柄はありません。相場環境が変わるのをお待ちください。")
         
