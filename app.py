@@ -316,8 +316,13 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134, holding_period=
             vol_5d_avg = get_val(df['Volume'].rolling(window=5).mean().iloc[-1])
             current_rsi = get_val(df['RSI'].iloc[-1])
             
-            # 対象日付
+            # --- 推奨サイン（ポジティブ）判定用の追加 ---
+            current_macd = get_val(df['MACD'].iloc[-1])
+            current_macd_signal = get_val(df['MACD_Signal'].iloc[-1])
+            
+            # 対象日付の計算
             latest_date_dt = df.index[-1]
+            week_later_dt = latest_date_dt + pd.offsets.BDay(holding_period)
             
             results.append({
                 "ticker": ticker,
@@ -338,6 +343,7 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134, holding_period=
                 "vol_5d_avg": vol_5d_avg,
                 "current_rsi": current_rsi,
                 "latest_date": latest_date_dt.strftime('%Y/%m/%d'),
+                "week_later_date": week_later_dt.strftime('%Y/%m/%d'),
                 "score_rule": analysis["proba_rule"] * 100,
                 "df": df
             })
@@ -360,9 +366,9 @@ st.markdown("### エグジットルール設定 (AIの学習目標)")
 st.write("この条件を満たす確率をAIが学習・予測します。ルールを変更するとAIがゼロから学習し直します。")
 col_rule1, col_rule2, col_rule3 = st.columns(3)
 with col_rule1:
-    holding_period = st.number_input("判定期間（営業日）", min_value=1, max_value=60, value=5, step=1, help="何日以内に条件を達成するか設定します。")
+    holding_period = st.number_input("判定期間（営業日）", min_value=1, max_value=60, value=15, step=1, help="何日以内に条件を達成するか設定します。")
 with col_rule2:
-    profit_target_pct = st.number_input("利確ライン（%）", min_value=1.0, max_value=100.0, value=10.0, step=1.0, help="株価が何%上昇したら利益確定するか設定します。")
+    profit_target_pct = st.number_input("利確ライン（%）", min_value=1.0, max_value=100.0, value=8.0, step=1.0, help="株価が何%上昇したら利益確定するか設定します。")
 with col_rule3:
     stop_loss_pct = st.number_input("損切りライン（%）", min_value=-50.0, max_value=-1.0, value=-5.0, step=1.0, help="株価が何%下落したら損切りするか設定します（マイナスで入力）。")
 
@@ -409,6 +415,23 @@ if 'analysis_results' in st.session_state:
     st.write("設定されたトレードルールを満たし、かつご指定の予算内に収まる有望銘柄をピックアップします。")
     st.caption(f"【選定条件】・1株{max_price:,}円以下 ・75日移動平均線上(上昇トレンド) ・{holding_period}日以内に「{stop_loss_pct}%損切り」に触れず「+{profit_target_pct}%利確」を達成する確率が50%超")
     
+    with st.expander("💡 【備忘録】表示されるテクニカルアラートの読み解き方と活用法"):
+    with st.expander("💡 【備忘録】表示されるテクニカルサインの読み解き方と活用法"):
+        st.markdown("""
+        各テクニカル指標には得意な相場と「ダマシ」のリスクがあります。単独で判断せず、**AIが算出した条件達成確率を主軸**とし、サインはサブ情報として活用するのが効果的です。
+
+        **🔵 推奨サイン (背中を押すポジティブ要素)**
+        *   **MACD上抜け(GC圏):** トレンドの勢いが上向き（ゴールデンクロス圏）です。AIの高勝率と重なれば、強い上昇の初動に乗れる可能性があります。
+        *   **出来高急増:** 当日の出来高が過去5日平均の1.5倍以上に急増しています。大口（機関投資家など）の資金流入のサインであり、強いトレンドが長続きしやすいです。
+        *   **短期上昇トレンド:** 株価が5日線の上にあり、かつ5日線が25日線上にある状態です。安定した上昇の波に乗っていることを示します。
+
+        **🔴 注意サイン (エントリー見送り・出口準備のネガティブ要素)**
+        *   **25日線割れ (優先度【中】):** 中期的な調整局面を示します。AIの勝率が高くても、再度25日線を上抜けるまで様子を見るのが安全です。
+        *   **MACD下落傾向 (優先度【中】):** トレンドの勢いが下向きです。この下落傾向から「推奨サイン」に転じた瞬間が強いエントリー根拠になります。
+        *   **5日線割れ (優先度【低】):** ノイズによるダマシが多いため、「短期的には少し弱含んでいる」程度の認識で十分です。
+        *   **RSI過熱(70%超) / +2σ超過:** 強い上昇トレンドの最中はこれらが出続けます。「買うのをやめる」のではなく、**「そろそろ勢いが止まるかもしれないから、利益確定を早めにしよう」というエグジット警戒情報**として使います。
+        """)
+    
     recommended_stocks = []
     for stock in results:
         cond0 = stock['price'] <= max_price
@@ -446,21 +469,33 @@ if 'analysis_results' in st.session_state:
                                 rsi_alert = ""
                             st.markdown(f"<p style='color: {rsi_color}; font-size: 0.85em; font-weight: bold; margin-bottom: 5px;'>RSI: {stock['current_rsi']:.1f}%{rsi_alert}</p>", unsafe_allow_html=True)
 
-                            # テクニカル指標の全網羅アラート
-                            alerts = []
-                            if stock['price'] < stock['current_sma_5']:
-                                alerts.append("5日線割れ")
-                            if stock['price'] < stock['current_sma_25']:
-                                alerts.append("25日線割れ")
-                            if stock['current_volume'] < stock['vol_5d_avg']:
-                                alerts.append("出来高低迷")
-                            if stock['current_macd'] < stock['current_macd_signal']:
-                                alerts.append("MACD下落傾向")
-                            if stock['price'] >= stock['current_bb_mid'] + (stock['current_bb_std'] * 2):
-                                alerts.append("+2σ超過(過熱)")
+                            # --- 推奨サイン（ポジティブ）の判定と表示 ---
+                            positive_alerts = []
+                            if stock['current_macd'] > stock['current_macd_signal']:
+                                positive_alerts.append("MACD上抜け(GC圏)")
+                            if stock['current_volume'] >= (stock['vol_5d_avg'] * 1.5):
+                                positive_alerts.append("出来高急増")
+                            if stock['price'] > stock['current_sma_5'] and stock['current_sma_5'] > stock['current_sma_25']:
+                                positive_alerts.append("短期上昇トレンド")
                                 
-                            if alerts:
-                                st.markdown(f"<p style='color: red; font-size: 0.8em; font-weight: bold; margin-top: -5px; margin-bottom: 5px; line-height: 1.2;'>注意: {' / '.join(alerts)}</p>", unsafe_allow_html=True)
+                            if positive_alerts:
+                                st.markdown(f"<p style='color: #1976D2; font-size: 0.8em; font-weight: bold; margin-top: -5px; margin-bottom: 5px; line-height: 1.2;'>🔵 推奨: {' / '.join(positive_alerts)}</p>", unsafe_allow_html=True)
+
+                            # --- 注意サイン（ネガティブ）の判定と表示 ---
+                            negative_alerts = []
+                            if stock['price'] < stock['current_sma_5']:
+                                negative_alerts.append("5日線割れ")
+                            if stock['price'] < stock['current_sma_25']:
+                                negative_alerts.append("25日線割れ")
+                            if stock['current_volume'] < stock['vol_5d_avg']:
+                                negative_alerts.append("出来高低迷")
+                            if stock['current_macd'] < stock['current_macd_signal']:
+                                negative_alerts.append("MACD下落傾向")
+                            if stock['price'] >= stock['current_bb_mid'] + (stock['current_bb_std'] * 2):
+                                negative_alerts.append("+2σ超過(過熱)")
+                                
+                            if negative_alerts:
+                                st.markdown(f"<p style='color: #D32F2F; font-size: 0.8em; font-weight: bold; margin-top: -5px; margin-bottom: 5px; line-height: 1.2;'>🔴 注意: {' / '.join(negative_alerts)}</p>", unsafe_allow_html=True)
 
                             st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>条件達成確率: {stock['score_rule']:.1f}%</p>", unsafe_allow_html=True)
                             st.markdown("---")
@@ -470,42 +505,52 @@ if 'analysis_results' in st.session_state:
         
     st.divider()
     
-    # ランキングソート（確率が高い順）
-    results_sorted = sorted(results, key=lambda x: x['score_rule'], reverse=True)
-    
-    col_up, col_down = st.columns(2)
-    
-    with col_up:
-        st.subheader(f"条件達成 期待度 トップ10")
-        st.caption(f"{holding_period}日以内に「{stop_loss_pct}%損切り」に触れず「+{profit_target_pct}%利確」を達成する確率が高い銘柄")
-            
-        for i in range(min(10, len(results_sorted))):
-            stock = results_sorted[i]
-            with st.container(border=True):
-                st.markdown(f"**第{i+1}位: {stock['name']}**")
-                st.caption(f"{stock['ticker']} | {stock['latest_date']} 終値: ¥{stock['price']:,.0f} (始値: ¥{stock['open']:,.0f} / 高値: ¥{stock['high']:,.0f} / 安値: ¥{stock['low']:,.0f})")
-                st.markdown(f"<h3 style='color: green; margin-top: -10px; margin-bottom: 0px;'>達成確率: {stock['score_rule']:.1f}%</h3>", unsafe_allow_html=True)
-
-    with col_down:
-        st.subheader(f"条件達成 困難 ワースト10")
-        st.caption("利確よりも先に損切りにかかる、または期間内に動きがない確率が高い銘柄")
-            
-        for i in range(min(10, len(results_sorted))):
-            stock = results_sorted[-(i+1)]
-            failure_prob = 100 - stock['score_rule']
-            
-            with st.container(border=True):
-                st.markdown(f"**第{i+1}位: {stock['name']}**")
-                st.caption(f"{stock['ticker']} | {stock['latest_date']} 終値: ¥{stock['price']:,.0f} (始値: ¥{stock['open']:,.0f} / 高値: ¥{stock['high']:,.0f} / 安値: ¥{stock['low']:,.0f})")
-                st.markdown(f"<h3 style='color: red; margin-top: -10px; margin-bottom: 0px;'>失敗確率: {failure_prob:.1f}%</h3>", unsafe_allow_html=True)
-
-    st.divider()
-    
-    st.subheader("銘柄ごとの詳細チャート確認")
-    selected_name = st.selectbox("詳細を見たい銘柄を選択してください", [r['name'] for r in sorted(results, key=lambda x: x['ticker'])])
+    st.subheader("銘柄ごとの詳細チャート確認 ＆ 保有銘柄の売りサイン診断")
+    st.write("詳細を見たい銘柄、または保有中の銘柄を選択してください。現在のテクニカル指標から「売り（手仕舞い）」の警戒サインが出ていないか診断します。")
+    selected_name = st.selectbox("銘柄を選択", [r['name'] for r in sorted(results, key=lambda x: x['ticker'])])
     selected_stock = next(r for r in results if r['name'] == selected_name)
     df = selected_stock['df']
     
+    # --- 売りサイン判定ロジック ---
+    def get_val(val):
+        return float(val.iloc[0]) if isinstance(val, pd.Series) else float(val)
+        
+    current_price = get_val(df['Close'].iloc[-1])
+    current_open = get_val(df['Open'].iloc[-1])
+    current_sma_5 = get_val(df['SMA_5'].iloc[-1])
+    current_sma_25 = get_val(df['SMA_25'].iloc[-1])
+    current_macd = get_val(df['MACD'].iloc[-1])
+    current_macd_signal = get_val(df['MACD_Signal'].iloc[-1])
+    prev_macd = get_val(df['MACD'].iloc[-2]) if len(df) > 1 else current_macd
+    current_rsi = get_val(df['RSI'].iloc[-1])
+    prev_rsi = get_val(df['RSI'].iloc[-2]) if len(df) > 1 else current_rsi
+    current_volume = get_val(df['Volume'].iloc[-1])
+    vol_5d_avg = get_val(df['Volume'].rolling(window=5).mean().iloc[-1])
+
+    sell_signals = []
+    
+    if current_price < current_sma_5:
+        sell_signals.append("【短期警戒】 5日移動平均線を下回りました（短期的な上昇トレンドの一服）。")
+    if current_price < current_sma_25:
+        sell_signals.append("【中期警戒】 25日移動平均線を下回りました（スイングトレードにおける手仕舞いの目安です）。")
+    if current_macd < current_macd_signal or current_macd < prev_macd:
+        sell_signals.append("【勢い低下】 MACDが下落傾向、またはデッドクロス圏にあります。")
+    if current_rsi < prev_rsi and prev_rsi >= 70:
+        sell_signals.append("【過熱からの調整】 RSIが過熱圏(70超)から下落に転じました。")
+    if current_price < current_open and current_volume > vol_5d_avg:
+         sell_signals.append("【売り圧力】 平均より多い出来高を伴って下落（陰線）しています。")
+
+    # --- 売りサイン結果表示 ---
+    st.markdown(f"#### 💡 {selected_name} の手仕舞い（売り）サイン診断")
+    if not sell_signals:
+        st.success(f"現在、**{selected_name}** に目立った売りサインは点灯していません。トレンドは継続している可能性があります。")
+    else:
+        st.warning(f"現在、**{len(sell_signals)}つ** の売り警戒サインが点灯しています。利益確定や損切りの準備（逆指値の引き上げなど）を検討する時期かもしれません。")
+        for signal in sell_signals:
+            st.markdown(f"- {signal}")
+
+    st.markdown("---")
+            
     plot_df = df.tail(120) 
     
     fig = go.Figure(data=[go.Candlestick(x=plot_df.index,
