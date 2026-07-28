@@ -129,7 +129,19 @@ stock_count = len(TARGET_STOCKS)
 def add_technical_indicators(df):
     df['SMA_5'] = df['Close'].rolling(window=5).mean()
     df['SMA_25'] = df['Close'].rolling(window=25).mean()
+    df['SMA_75'] = df['Close'].rolling(window=75).mean() # 追加: 中長期トレンド
     df['Return'] = df['Close'].pct_change()
+    
+    # MACDの追加 (スイングトレードのモメンタム指標)
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    
+    # ボリンジャーバンド幅の追加 (ボラティリティの収縮・拡大を捉え、急騰を予測)
+    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+    df['BB_Std'] = df['Close'].rolling(window=20).std()
+    df['BB_Width'] = (df['BB_Std'] * 4) / df['BB_Mid']
     
     delta = df['Close'].diff()
     up = delta.clip(lower=0)
@@ -146,7 +158,7 @@ def add_technical_indicators(df):
 
 # --- モデル学習関数 ---
 def analyze_stock_data(df, n_estimators=100, holding_period=5, profit_target_pct=10.0, stop_loss_pct=-5.0):
-    if len(df) < 50:
+    if len(df) < 100: # 75日線を計算するため、足切りを100日に変更
         return None
     
     if isinstance(df.columns, pd.MultiIndex):
@@ -191,18 +203,24 @@ def analyze_stock_data(df, n_estimators=100, holding_period=5, profit_target_pct
     # 無限大(inf)をNaNに変換してから削除（出来高0などで発生するエラーを回避）
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     
-    # 目的変数がNaNの行（直近5日分など）を削除し、学習データを作成
-    df_clean = df.dropna(subset=['Target_Class_Rule'] + ['Close', 'Volume', 'SMA_5', 'SMA_25', 'Return', 'RSI', 'Volatility', 'Vol_Change'])
+    # 特徴量リストを更新
+    features = ['Close', 'Volume', 'SMA_5', 'SMA_25', 'SMA_75', 'Return', 'RSI', 'Volatility', 'Vol_Change', 'MACD', 'MACD_Signal', 'BB_Width']
     
-    features = ['Close', 'Volume', 'SMA_5', 'SMA_25', 'Return', 'RSI', 'Volatility', 'Vol_Change']
+    # 目的変数がNaNの行（直近5日分など）を削除し、学習データを作成
+    df_clean = df.dropna(subset=['Target_Class_Rule'] + features)
+    
     X = df_clean[features]
     
     # 1クラスしかない場合（例：過去すべて失敗）はエラーになるため回避
     if len(df_clean['Target_Class_Rule'].unique()) < 2:
         return None
     
-    # モデルの構築と学習 (分類モデル1つのみ)
-    model_class = RandomForestClassifier(n_estimators=n_estimators, random_state=42).fit(X, df_clean['Target_Class_Rule'])
+    # モデルの構築と学習 (class_weight='balanced'を追加し、AIの怠慢を防止)
+    model_class = RandomForestClassifier(
+        n_estimators=n_estimators, 
+        class_weight='balanced', 
+        random_state=42
+    ).fit(X, df_clean['Target_Class_Rule'])
     
     # 予測は「直近の最新データ」に対して行う
     latest_data = df.iloc[-1:][features]
@@ -286,6 +304,7 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134, holding_period=
             current_low = get_val(df['Low'].iloc[-1])
             
             current_sma_25 = get_val(df['SMA_25'].iloc[-1])
+            current_sma_75 = get_val(df['SMA_75'].iloc[-1])
             current_volume = get_val(df['Volume'].iloc[-1])
             vol_change = get_val(df['Vol_Change'].iloc[-1])
             vol_5d_avg = get_val(df['Volume'].rolling(window=5).mean().iloc[-1])
@@ -302,6 +321,7 @@ def generate_all_results(years=3.0, n_estimators=100, top_n=134, holding_period=
                 "high": current_high,
                 "low": current_low,
                 "current_sma_25": current_sma_25,
+                "current_sma_75": current_sma_75,
                 "current_volume": current_volume,
                 "vol_change": vol_change,
                 "vol_5d_avg": vol_5d_avg,
@@ -376,14 +396,15 @@ if 'analysis_results' in st.session_state:
     max_price = st.number_input("予算上限：1株あたりの価格（円）を設定してください", min_value=100, max_value=150000, value=5000, step=100, help="指定した金額以下の銘柄のみをレコメンドします。（例: 5000円 = 100株単位で50万円）")
     
     st.write("設定されたトレードルールを満たし、かつご指定の予算内に収まる有望銘柄をピックアップします。")
-    st.caption(f"【選定条件】・1株{max_price:,}円以下 ・{holding_period}日以内に「{stop_loss_pct}%損切り」に触れず「+{profit_target_pct}%利確」を達成する確率が50%超")
+    st.caption(f"【選定条件】・1株{max_price:,}円以下 ・75日移動平均線上(上昇トレンド) ・{holding_period}日以内に「{stop_loss_pct}%損切り」に触れず「+{profit_target_pct}%利確」を達成する確率が50%超")
     
     recommended_stocks = []
     for stock in results:
         cond0 = stock['price'] <= max_price
         cond1 = stock['score_rule'] > 50
+        cond2 = stock['price'] > stock['current_sma_75'] # トレンドフィルター: 75日線より上にあること
         
-        if cond0 and cond1:
+        if cond0 and cond1 and cond2:
             stock['recommend_score'] = stock['score_rule']
             recommended_stocks.append(stock)
             
