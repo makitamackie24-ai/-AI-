@@ -498,7 +498,13 @@ if 'analysis_results' in st.session_state:
 
                             st.markdown(f"<p style='color: green; font-weight: bold; margin-bottom: 0px;'>条件達成確率: {stock['score_rule']:.1f}%</p>", unsafe_allow_html=True)
                             st.markdown("---")
+                            
+                            # 目標株価の計算
+                            target_price = stock['price'] * (1 + profit_target_pct / 100)
+                            stop_price = stock['price'] * (1 + stop_loss_pct / 100)
+                            
                             st.markdown(f"<p style='font-size: 0.85em; margin-bottom: 0px;'><b>直近 ({stock['latest_date']})</b><br>終値: ¥{stock['price']:,.0f} | 始値: ¥{stock['open']:,.0f}<br>高値: ¥{stock['high']:,.0f} | 安値: ¥{stock['low']:,.0f}</p>", unsafe_allow_html=True)
+                            st.markdown(f"<div style='font-size: 0.85em; margin-top: 5px; padding: 5px; border: 1px solid #ccc; border-radius: 5px;'><b>【エグジット目安 (現在値基準)】</b><br>🟢 利確 (+{profit_target_pct}%): <b>¥{target_price:,.0f}</b><br>🔴 損切 ({stop_loss_pct}%): <b>¥{stop_price:,.0f}</b></div>", unsafe_allow_html=True)
     else:
         st.info("現在、設定された厳しいルール条件（勝率50%超）を満たす銘柄はありません。相場環境が変わるのをお待ちください。")
         
@@ -506,7 +512,13 @@ if 'analysis_results' in st.session_state:
     
     st.subheader("銘柄ごとの詳細チャート確認 ＆ 保有銘柄の売りサイン診断")
     st.write("詳細を見たい銘柄、または保有中の銘柄を選択してください。現在のテクニカル指標から「売り（手仕舞い）」の警戒サインが出ていないか診断します。")
-    selected_name = st.selectbox("銘柄を選択", [r['name'] for r in sorted(results, key=lambda x: x['ticker'])])
+    
+    col_sel1, col_sel2 = st.columns([2, 1])
+    with col_sel1:
+        selected_name = st.selectbox("銘柄を選択", [r['name'] for r in sorted(results, key=lambda x: x['ticker'])])
+    with col_sel2:
+        entry_price = st.number_input("取得単価（保有中の場合・任意）", min_value=0, value=0, step=100, help="実際に購入した株価を入力すると、その価格を基準にした目標株価を計算します。未入力(0)の場合は現在値を基準にします。")
+        
     selected_stock = next(r for r in results if r['name'] == selected_name)
     df = selected_stock['df']
     
@@ -547,6 +559,18 @@ if 'analysis_results' in st.session_state:
         st.warning(f"現在、**{len(sell_signals)}つ** の売り警戒サインが点灯しています。利益確定や損切りの準備（逆指値の引き上げなど）を検討する時期かもしれません。")
         for signal in sell_signals:
             st.markdown(f"- {signal}")
+
+    # --- 売却目標株価の計算と表示 ---
+    base_price = entry_price if entry_price > 0 else current_price
+    target_price_sell = base_price * (1 + profit_target_pct / 100)
+    stop_price_sell = base_price * (1 + stop_loss_pct / 100)
+    
+    base_text = f"取得単価 (¥{base_price:,.0f})" if entry_price > 0 else f"現在の株価 (¥{base_price:,.0f})"
+    
+    st.info(f"**🎯 {base_text} を基準とした売却目標**\n"
+            f"- 🟢 **利確目標 (+{profit_target_pct}%): ¥{target_price_sell:,.0f}**\n"
+            f"- 🔴 **損切ライン ({stop_loss_pct}%): ¥{stop_price_sell:,.0f}**\n\n"
+            f"※設定されたエグジットルールに基づく機械的な目安です。売りサインの点灯状況と合わせてご判断ください。")
 
     st.markdown("---")
             
