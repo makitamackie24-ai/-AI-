@@ -553,12 +553,27 @@ if 'analysis_results' in st.session_state:
 
     # --- 売りサイン結果表示 ---
     st.markdown(f"#### 💡 {selected_name} の手仕舞い（売り）サイン診断")
+    
+    high_alert = any("高" in s for s in sell_signals)
+    mid_alert = any("中" in s for s in sell_signals)
+    
     if not sell_signals:
         st.success(f"現在、**{selected_name}** に目立った売りサインは点灯していません。トレンドは継続している可能性があります。")
+        action_text = "💡 **【推奨アクション: ホールド】** 現在のトレンドに乗ったまま、設定した利確・損切ライン（下記）での決済を待ちます。"
     else:
-        st.warning(f"現在、**{len(sell_signals)}つ** の売り警戒サインが点灯しています。利益確定や損切りの準備（逆指値の引き上げなど）を検討する時期かもしれません。")
+        st.warning(f"現在、**{len(sell_signals)}つ** の売り警戒サインが点灯しています。")
         for signal in sell_signals:
             st.markdown(f"- {signal}")
+            
+        if high_alert:
+            action_text = "🚨 **【推奨アクション: 即時撤退】** 中期トレンドの崩壊や大口の売りの兆候があります。**翌営業日の寄り付き（成行）**、または現在値付近での即時決済（損切り・利確）を強く推奨します。"
+        elif mid_alert:
+            stop_level = current_sma_5
+            action_text = f"⚠️ **【推奨アクション: 逆指値の引き上げ】** 上値が重くなってきたサインです。利益を確保（または損失を最小化）するため、**5日移動平均線（約 ¥{stop_level:,.0f}）** や直近の安値を割ったら決済されるよう、逆指値注文を設定して様子を見ることをお勧めします。"
+        else:
+            action_text = "💡 **【推奨アクション: 警戒しつつホールド】** 短期的な調整の可能性がありますが、致命的なサインではありません。下記の損切りラインを厳守しつつ様子を見ます。"
+
+    st.markdown(f"<div style='background-color: #f0f2f6; padding: 15px; border-radius: 5px; margin-bottom: 15px; border-left: 5px solid #1976D2;'>{action_text}</div>", unsafe_allow_html=True)
 
     # --- 売却目標株価の計算と表示 ---
     base_price = entry_price if entry_price > 0 else current_price
@@ -567,10 +582,10 @@ if 'analysis_results' in st.session_state:
     
     base_text = f"取得単価 (¥{base_price:,.0f})" if entry_price > 0 else f"現在の株価 (¥{base_price:,.0f})"
     
-    st.info(f"**🎯 {base_text} を基準とした売却目標**\n"
+    st.info(f"**🎯 {base_text} を基準とした売却目安 (ルールベース)**\n"
             f"- 🟢 **利確目標 (+{profit_target_pct}%): ¥{target_price_sell:,.0f}**\n"
             f"- 🔴 **損切ライン ({stop_loss_pct}%): ¥{stop_price_sell:,.0f}**\n\n"
-            f"※設定されたエグジットルールに基づく機械的な目安です。売りサインの点灯状況と合わせてご判断ください。")
+            f"※上記は事前のルールに基づく機械的な目安です。強い売りサインが点灯している場合は、上記の「推奨アクション」を優先してご判断ください。")
 
     st.markdown("---")
             
