@@ -375,7 +375,7 @@ with col_rule3:
 st.markdown("### 分析詳細設定")
 col_setting1, col_setting2 = st.columns(2)
 with col_setting1:
-    top_n = st.slider(f"解析対象とする売買代金上位の企業数を選択 (最大{stock_count}社)", min_value=10, max_value=stock_count, value=150, step=10, help="全銘柄から直近の売買代金が多い企業を自動選出し、AI解析の対象を絞ります。数を減らすと計算時間が短縮されます。")
+    top_n = st.slider(f"解析対象とする売買代金上位の企業数を選択 (最大{stock_count}社)", min_value=10, max_value=stock_count, value=200, step=10, help="全銘柄から直近の売買代金が多い企業を自動選出し、AI解析の対象を絞ります。数を減らすと計算時間が短縮されます。")
 with col_setting2:
     n_estimators = st.slider("AIモデルの木の本数 (10〜500本)", min_value=10, max_value=500, value=100, step=10, help="本数を増やすと予測が安定しますが、計算時間が長くなります。じっくり詳細分析したい時に500本をお試しください。")
 
