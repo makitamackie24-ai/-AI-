@@ -75,9 +75,30 @@ def add_technical_indicators(df):
     df['Sig_MACD_Buy'] = (df['MACD'] > df['MACD_Signal']) & (df['MACD'].shift(1) <= df['MACD_Signal'].shift(1))
     df['Sig_MACD_Sell'] = (df['MACD'] < df['MACD_Signal']) & (df['MACD'].shift(1) >= df['MACD_Signal'].shift(1))
     
-    # グランビル
-    df['Sig_Granville_Buy'] = (df['SMA_20'] >= df['SMA_20'].shift(1)) & (df['Close'] > df['SMA_20']) & (df['Close'].shift(1) <= df['SMA_20'].shift(1))
-    df['Sig_Granville_Sell'] = (df['SMA_20'] <= df['SMA_20'].shift(1)) & (df['Close'] < df['SMA_20']) & (df['Close'].shift(1) >= df['SMA_20'].shift(1))
+    # グランビルの法則 (5日線と20日線による厳密な判定)
+    sma20_diff = df['SMA_20'] - df['SMA_20'].shift(1)
+    sma20_diff_past = df['SMA_20'].shift(1) - df['SMA_20'].shift(6) # 過去5日間の傾き
+    sma5_diff = df['SMA_5'] - df['SMA_5'].shift(1)
+    sma5_diff_prev = df['SMA_5'].shift(1) - df['SMA_5'].shift(2)
+    
+    cross_up = (df['SMA_5'] > df['SMA_20']) & (df['SMA_5'].shift(1) <= df['SMA_20'].shift(1))
+    cross_dn = (df['SMA_5'] < df['SMA_20']) & (df['SMA_5'].shift(1) >= df['SMA_20'].shift(1))
+    
+    # 買い①（買い転換）：20日線が一定期間下落後、横ばいor上向きで、5日線が下から上へ抜ける
+    g_buy1 = cross_up & (sma20_diff_past < 0) & (sma20_diff >= 0)
+    # 買い②（押し目買い）：20日線が上向きの時、5日線が下から上へ抜ける
+    g_buy2 = cross_up & (sma20_diff > 0)
+    # 買い③（買い乗せ）：20日線が上向きの時、5日線が下落するも20日線を下抜けず再度上昇
+    g_buy3 = (sma20_diff > 0) & (df['SMA_5'] > df['SMA_20']) & (sma5_diff_prev < 0) & (sma5_diff > 0)
+    df['Sig_Granville_Buy'] = g_buy1 | g_buy2 | g_buy3
+    
+    # 売り①（売り転換）：20日線が一定期間上昇後、横ばいor下向きで、5日線が上から下へ抜ける
+    g_sell1 = cross_dn & (sma20_diff_past > 0) & (sma20_diff <= 0)
+    # 売り②（戻り売り）：20日線が下向きの時、5日線が上から下へ抜ける
+    g_sell2 = cross_dn & (sma20_diff < 0)
+    # 売り③（売り乗せ）：20日線が下向きの時、5日線が上昇するも20日線を上抜けず再度下落
+    g_sell3 = (sma20_diff < 0) & (df['SMA_5'] < df['SMA_20']) & (sma5_diff_prev > 0) & (sma5_diff < 0)
+    df['Sig_Granville_Sell'] = g_sell1 | g_sell2 | g_sell3
     
     # 一目均衡表 (厳密な三役好転・三役逆転の判定)
     cloud_top = df[['Senkou1', 'Senkou2']].max(axis=1)
@@ -315,27 +336,15 @@ def analyze_all_stocks():
                 current_trend = "ボックストレンド ➡️"
                 
             # --- Step2 & 3: テクニカルサイン判定 ---
-            # グランビルの法則 (直近1ヶ月間（20営業日）でクロスが発生しているか判定)
-            granville_buy = False
-            granville_buy_date = None
-            granville_sell = False
-            granville_sell_date = None
-            for j in range(1, 21): # 検出期間を直近20日間に拡大
-                c0, c1 = get_val(df['Close'], -j), get_val(df['Close'], -(j+1))
-                s0, s1 = get_val(df['SMA_20'], -j), get_val(df['SMA_20'], -(j+1))
-                
-                curr_date_str = pd.to_datetime(df.index[-j]).strftime('%Y-%m-%d')
-                
-                # 買い: 20日線が上向きor横ばいで、株価が下から上へクロス
-                if s0 >= s1 and c0 > s0 and c1 <= s1:
-                    if not granville_buy:
-                        granville_buy = True
-                        granville_buy_date = curr_date_str
-                # 売り: 20日線が下向きor横ばいで、株価が上から下へクロス
-                if s0 <= s1 and c0 < s0 and c1 >= s1:
-                    if not granville_sell:
-                        granville_sell = True
-                        granville_sell_date = curr_date_str
+            # グランビルの法則 (直近1ヶ月間（20営業日）でシグナルが点灯しているか判定)
+            recent_g_buy = df['Sig_Granville_Buy'].tail(20)
+            recent_g_sell = df['Sig_Granville_Sell'].tail(20)
+            
+            granville_buy = bool(recent_g_buy.any())
+            granville_buy_date = pd.to_datetime(recent_g_buy[recent_g_buy == True].index[-1]).strftime('%Y-%m-%d') if granville_buy else None
+            
+            granville_sell = bool(recent_g_sell.any())
+            granville_sell_date = pd.to_datetime(recent_g_sell[recent_g_sell == True].index[-1]).strftime('%Y-%m-%d') if granville_sell else None
                     
             latest_date_str = pd.to_datetime(df.index[-1]).strftime('%Y-%m-%d')
             
