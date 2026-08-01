@@ -370,6 +370,58 @@ if 'results' in st.session_state:
                 colors = ['#ef5350' if row['Close'] < row['Open'] else '#26a69a' for index, row in df_c.iterrows()]
                 fig.add_trace(go.Bar(x=df_c.index, y=df_c['Volume'], marker_color=colors, name='出来高'), row=2, col=1)
                 
+                df_c_dates = df_c.index.strftime('%Y-%m-%d').tolist()
+                
+                # 買いシグナルを日付ごとに集計
+                buy_signals = {}
+                for sig_name, sig_data in res['signals_buy'].items():
+                    if sig_data['active'] and sig_data['date']:
+                        d = sig_data['date']
+                        if d not in buy_signals:
+                            buy_signals[d] = []
+                        buy_signals[d].append(sig_name)
+                        
+                buy_x, buy_y, buy_text = [], [], []
+                for d, sigs in buy_signals.items():
+                    if d in df_c_dates:
+                        idx = df_c_dates.index(d)
+                        buy_x.append(df_c.index[idx])
+                        # ローソク足の安値の少し下（0.98倍）の位置にマーカーを配置
+                        buy_y.append(df_c['Low'].iloc[idx] * 0.98)
+                        buy_text.append("<b>【買いシグナル】</b><br>" + "<br>".join(sigs))
+                        
+                if buy_x:
+                    fig.add_trace(go.Scatter(
+                        x=buy_x, y=buy_y, mode='markers',
+                        marker=dict(symbol='triangle-up', size=14, color='#E91E63', line=dict(width=1, color='white')),
+                        name='買いシグナル点灯', hovertext=buy_text, hoverinfo='text'
+                    ), row=1, col=1)
+
+                # 売りシグナルを日付ごとに集計
+                sell_signals = {}
+                for sig_name, sig_data in res['signals_sell'].items():
+                    if sig_data['active'] and sig_data['date']:
+                        d = sig_data['date']
+                        if d not in sell_signals:
+                            sell_signals[d] = []
+                        sell_signals[d].append(sig_name)
+                        
+                sell_x, sell_y, sell_text = [], [], []
+                for d, sigs in sell_signals.items():
+                    if d in df_c_dates:
+                        idx = df_c_dates.index(d)
+                        sell_x.append(df_c.index[idx])
+                        # ローソク足の高値の少し上（1.02倍）の位置にマーカーを配置
+                        sell_y.append(df_c['High'].iloc[idx] * 1.02)
+                        sell_text.append("<b>【売りシグナル】</b><br>" + "<br>".join(sigs))
+                        
+                if sell_x:
+                    fig.add_trace(go.Scatter(
+                        x=sell_x, y=sell_y, mode='markers',
+                        marker=dict(symbol='triangle-down', size=14, color='#00BCD4', line=dict(width=1, color='white')),
+                        name='売りシグナル点灯', hovertext=sell_text, hoverinfo='text'
+                    ), row=1, col=1)
+                
                 # レイアウト調整
                 fig.update_layout(
                     height=500, 
