@@ -15,7 +15,7 @@ st.set_page_config(
 )
 
 st.title("AI & マルチテクニカル 総合診断ツール")
-st.write("過去5年分のデータから、グランビルの法則、ダウ理論、一目均衡表などの主要テクニカル指標と、AI（ランダムフォレスト500本）を用いた1ヶ月後のトレンド予測を統合して表示します。")
+st.write("過去3年分のデータから、グランビルの法則、ダウ理論、一目均衡表などの主要テクニカル指標と、AI（ランダムフォレスト200本）を用いた1ヶ月後のトレンド予測を統合して表示します。")
 
 # --- Step0: 対象銘柄リスト ---
 TARGET_STOCKS = {
@@ -188,19 +188,19 @@ def run_ai_prediction(df):
         
     X = train_df[features]
     
-    # 上昇予測モデル (木500本)
+    # 上昇予測モデル (木200本)
     y_up = train_df['Target_Up']
     if len(y_up.unique()) > 1:
-        model_up = RandomForestClassifier(n_estimators=500, class_weight='balanced', random_state=42)
+        model_up = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42)
         model_up.fit(X, y_up)
         prob_up = model_up.predict_proba(df[features].iloc[-1:])[:, 1][0]
     else:
         prob_up = 0.0
         
-    # 下落予測モデル (木500本)
+    # 下落予測モデル (木200本)
     y_down = train_df['Target_Down']
     if len(y_down.unique()) > 1:
-        model_down = RandomForestClassifier(n_estimators=500, class_weight='balanced', random_state=42)
+        model_down = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42)
         model_down.fit(X, y_down)
         prob_down = model_down.predict_proba(df[features].iloc[-1:])[:, 1][0]
     else:
@@ -213,9 +213,9 @@ def run_ai_prediction(df):
 def analyze_all_stocks():
     results = []
     
-    # 過去5年分のデータ取得 (Step0)
+    # 過去3年分のデータ取得 (Step0)
     end_date = datetime.today()
-    start_date = end_date - timedelta(days=365 * 5)
+    start_date = end_date - timedelta(days=365 * 3)
     tickers = list(TARGET_STOCKS.keys())
     
     df_all = yf.download(tickers, start=start_date, end=end_date, group_by='ticker', progress=False)
@@ -338,8 +338,8 @@ def analyze_all_stocks():
 # --- 画面描画 ---
 col1, col2 = st.columns([3, 1])
 with col1:
-    if st.button("全10銘柄の総合診断を実行 (過去5年分データ取得・AI学習)", type="primary"):
-        with st.spinner("過去5年分のデータを取得し、AI（ランダムフォレスト500本）と各種テクニカル指標の解析を行っています..."):
+    if st.button("全10銘柄の総合診断を実行 (過去3年分データ取得・AI学習)", type="primary"):
+        with st.spinner("過去3年分のデータを取得し、AI（ランダムフォレスト200本）と各種テクニカル指標の解析を行っています..."):
             results = analyze_all_stocks()
             st.session_state['results'] = results
 with col2:
@@ -472,7 +472,7 @@ if 'results' in st.session_state:
                     margin=dict(l=0, r=0, t=30, b=0), 
                     xaxis_rangeslider_visible=False, # ローソク足標準のレンジスライダーを非表示
                     showlegend=True,
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
                 )
                 
                 # 土日などの休場日の空白を詰める処理
