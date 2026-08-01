@@ -733,14 +733,18 @@ if 'results' in st.session_state:
                 st.markdown("##### 🔵 買いシグナルの実績 (1〜4週間後)")
                 if res.get('buy_stats'):
                     df_buy_stats = pd.DataFrame(res['buy_stats'])
+                    
+                    # Styleを簡略化し、エラーを回避する
+                    styled_buy_df = df_buy_stats.style.format({
+                        "精度スコア": "{:.0f}",
+                        "1週間後": "{:+.2f}%", 
+                        "2週間後": "{:+.2f}%", 
+                        "3週間後": "{:+.2f}%", 
+                        "4週間後": "{:+.2f}%"
+                    }, na_rep="-")
+                    
                     st.dataframe(
-                        df_buy_stats.style.format({
-                            "精度スコア": "{:.0f}",
-                            "1週間後": "{:+.2f}%", 
-                            "2週間後": "{:+.2f}%", 
-                            "3週間後": "{:+.2f}%", 
-                            "4週間後": "{:+.2f}%"
-                        }, na_rep="-").background_gradient(subset=['精度スコア'], cmap='Greens', vmin=0, vmax=100),
+                        styled_buy_df,
                         hide_index=True,
                         use_container_width=True
                     )
@@ -750,14 +754,18 @@ if 'results' in st.session_state:
                 st.markdown("##### 🔴 売りシグナルの実績 (1〜3日後・1週間後)")
                 if res.get('sell_stats'):
                     df_sell_stats = pd.DataFrame(res['sell_stats'])
+                    
+                    # Styleを簡略化し、エラーを回避する
+                    styled_sell_df = df_sell_stats.style.format({
+                        "精度スコア": "{:.0f}",
+                        "1日後": "{:+.2f}%", 
+                        "2日後": "{:+.2f}%", 
+                        "3日後": "{:+.2f}%",
+                        "1週間後": "{:+.2f}%"
+                    }, na_rep="-")
+                    
                     st.dataframe(
-                        df_sell_stats.style.format({
-                            "精度スコア": "{:.0f}",
-                            "1日後": "{:+.2f}%", 
-                            "2日後": "{:+.2f}%", 
-                            "3日後": "{:+.2f}%",
-                            "1週間後": "{:+.2f}%"
-                        }, na_rep="-").background_gradient(subset=['精度スコア'], cmap='Reds', vmin=0, vmax=100),
+                        styled_sell_df,
                         hide_index=True,
                         use_container_width=True
                     )
