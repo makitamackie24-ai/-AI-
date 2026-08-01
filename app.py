@@ -511,6 +511,8 @@ if 'results' in st.session_state:
                 # チャート用シグナル抽出
                 buy_x, buy_y, buy_text = [], [], []
                 sell_x, sell_y, sell_text = [], [], []
+                dow_buy_x, dow_buy_y, dow_buy_text = [], [], []
+                dow_sell_x, dow_sell_y, dow_sell_text = [], [], []
 
                 for idx, row in df_c.iterrows():
                     d = idx.strftime('%Y-%m-%d')
@@ -523,7 +525,6 @@ if 'results' in st.session_state:
                     if pd.notna(row.get('Sig_Granville_Buy_2')) and bool(row.get('Sig_Granville_Buy_2')): b_sigs.append("グランビルの法則(買い②: 押し目買い)")
                     if pd.notna(row.get('Sig_Granville_Buy_3')) and bool(row.get('Sig_Granville_Buy_3')): b_sigs.append("グランビルの法則(買い③: 買い乗せ)")
                     if pd.notna(row.get('Sig_Ichimoku_Buy')) and bool(row.get('Sig_Ichimoku_Buy')): b_sigs.append("一目均衡表(三役好転)")
-                    if pd.notna(row.get('Sig_Dow_Buy')) and bool(row.get('Sig_Dow_Buy')): b_sigs.append("ダウ理論(上昇波)")
                     
                     if b_sigs:
                         buy_x.append(idx)
@@ -538,25 +539,50 @@ if 'results' in st.session_state:
                     if pd.notna(row.get('Sig_Granville_Sell_2')) and bool(row.get('Sig_Granville_Sell_2')): s_sigs.append("グランビルの法則(売り②: 戻り売り)")
                     if pd.notna(row.get('Sig_Granville_Sell_3')) and bool(row.get('Sig_Granville_Sell_3')): s_sigs.append("グランビルの法則(売り③: 売り乗せ)")
                     if pd.notna(row.get('Sig_Ichimoku_Sell')) and bool(row.get('Sig_Ichimoku_Sell')): s_sigs.append("一目均衡表(三役逆転)")
-                    if pd.notna(row.get('Sig_Dow_Sell')) and bool(row.get('Sig_Dow_Sell')): s_sigs.append("ダウ理論(下落波)")
                     
                     if s_sigs:
                         sell_x.append(idx)
                         sell_y.append(row['High'] * 1.04)
                         sell_text.append(f"<b>【売りシグナル】 {d}</b><br>" + "<br>".join(s_sigs))
                         
+                    # ダウ理論買い
+                    if pd.notna(row.get('Sig_Dow_Buy')) and bool(row.get('Sig_Dow_Buy')):
+                        dow_buy_x.append(idx)
+                        dow_buy_y.append(row['Low'] * 0.90) # 通常シグナルと被らないようさらに下に配置
+                        dow_buy_text.append(f"<b>【ダウ理論 買い】 {d}</b><br>上昇トレンド転換(高値・安値切り上げ)")
+
+                    # ダウ理論売り
+                    if pd.notna(row.get('Sig_Dow_Sell')) and bool(row.get('Sig_Dow_Sell')):
+                        dow_sell_x.append(idx)
+                        dow_sell_y.append(row['High'] * 1.10) # 通常シグナルと被らないようさらに上に配置
+                        dow_sell_text.append(f"<b>【ダウ理論 売り】 {d}</b><br>下落トレンド転換(高値・安値切り下げ)")
+                        
                 if buy_x:
                     fig.add_trace(go.Scatter(
                         x=buy_x, y=buy_y, mode='markers',
                         marker=dict(symbol='triangle-up', size=12, color='#00BCD4', line=dict(width=1, color='white')),
-                        name='買いシグナル点灯', hovertext=buy_text, hoverinfo='text'
+                        name='買いシグナル(各指標)', hovertext=buy_text, hoverinfo='text'
                     ), row=1, col=1)
                         
                 if sell_x:
                     fig.add_trace(go.Scatter(
                         x=sell_x, y=sell_y, mode='markers',
                         marker=dict(symbol='triangle-down', size=12, color='#E91E63', line=dict(width=1, color='white')),
-                        name='売りシグナル点灯', hovertext=sell_text, hoverinfo='text'
+                        name='売りシグナル(各指標)', hovertext=sell_text, hoverinfo='text'
+                    ), row=1, col=1)
+
+                if dow_buy_x:
+                    fig.add_trace(go.Scatter(
+                        x=dow_buy_x, y=dow_buy_y, mode='markers',
+                        marker=dict(symbol='star', size=16, color='#FFC107', line=dict(width=1, color='black')),
+                        name='ダウ理論 買い転換', hovertext=dow_buy_text, hoverinfo='text'
+                    ), row=1, col=1)
+
+                if dow_sell_x:
+                    fig.add_trace(go.Scatter(
+                        x=dow_sell_x, y=dow_sell_y, mode='markers',
+                        marker=dict(symbol='star', size=16, color='#9C27B0', line=dict(width=1, color='white')),
+                        name='ダウ理論 売り転換', hovertext=dow_sell_text, hoverinfo='text'
                     ), row=1, col=1)
                 
                 # レイアウト調整
