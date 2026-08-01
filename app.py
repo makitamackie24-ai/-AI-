@@ -336,10 +336,18 @@ def analyze_all_stocks():
     return results
 
 # --- 画面描画 ---
-if st.button("全10銘柄の総合診断を実行 (過去5年分データ取得・AI学習)", type="primary"):
-    with st.spinner("過去5年分のデータを取得し、AI（ランダムフォレスト500本）と各種テクニカル指標の解析を行っています..."):
-        results = analyze_all_stocks()
-        st.session_state['results'] = results
+col1, col2 = st.columns([3, 1])
+with col1:
+    if st.button("全10銘柄の総合診断を実行 (過去5年分データ取得・AI学習)", type="primary"):
+        with st.spinner("過去5年分のデータを取得し、AI（ランダムフォレスト500本）と各種テクニカル指標の解析を行っています..."):
+            results = analyze_all_stocks()
+            st.session_state['results'] = results
+with col2:
+    if st.button("🔄 データを最新に更新 (キャッシュクリア)"):
+        st.cache_data.clear()
+        if 'results' in st.session_state:
+            del st.session_state['results']
+        st.rerun()
 
 if 'results' in st.session_state:
     st.divider()
@@ -411,28 +419,38 @@ if 'results' in st.session_state:
                 colors = ['#ef5350' if row['Close'] < row['Open'] else '#26a69a' for index, row in df_c.iterrows()]
                 fig.add_trace(go.Bar(x=df_c.index, y=df_c['Volume'], marker_color=colors, name='出来高'), row=2, col=1)
                 
-                df_c_dates = df_c.index.strftime('%Y-%m-%d').tolist()
-                
-                buy_signals = {}
+                # チャート用シグナル抽出
+                buy_x, buy_y, buy_text = [], [], []
+                sell_x, sell_y, sell_text = [], [], []
+
                 for idx, row in df_c.iterrows():
                     d = idx.strftime('%Y-%m-%d')
-                    sigs = []
-                    if row.get('Sig_GC'): sigs.append("ゴールデンクロス(5日/20日)")
-                    if row.get('Sig_MACD_Buy'): sigs.append("MACD上抜け")
-                    if row.get('Sig_Granville_Buy'): sigs.append("グランビルの法則(買い)")
-                    if row.get('Sig_Ichimoku_Buy'): sigs.append("一目均衡表(三役好転)")
-                    if row.get('Sig_Dow_Buy'): sigs.append("ダウ理論(上昇波)")
-                    if sigs:
-                        buy_signals[d] = sigs
+                    
+                    # 買いシグナル
+                    b_sigs = []
+                    if pd.notna(row.get('Sig_GC')) and bool(row.get('Sig_GC')): b_sigs.append("ゴールデンクロス(5日/20日)")
+                    if pd.notna(row.get('Sig_MACD_Buy')) and bool(row.get('Sig_MACD_Buy')): b_sigs.append("MACD上抜け")
+                    if pd.notna(row.get('Sig_Granville_Buy')) and bool(row.get('Sig_Granville_Buy')): b_sigs.append("グランビルの法則(買い)")
+                    if pd.notna(row.get('Sig_Ichimoku_Buy')) and bool(row.get('Sig_Ichimoku_Buy')): b_sigs.append("一目均衡表(三役好転)")
+                    if pd.notna(row.get('Sig_Dow_Buy')) and bool(row.get('Sig_Dow_Buy')): b_sigs.append("ダウ理論(上昇波)")
+                    
+                    if b_sigs:
+                        buy_x.append(idx)
+                        buy_y.append(row['Low'] * 0.96)
+                        buy_text.append(f"<b>【買いシグナル】 {d}</b><br>" + "<br>".join(b_sigs))
                         
-                buy_x, buy_y, buy_text = [], [], []
-                for d, sigs in buy_signals.items():
-                    if d in df_c_dates:
-                        idx = df_c_dates.index(d)
-                        buy_x.append(df_c.index[idx])
-                        # ローソク足の安値の少し下（0.96倍）の位置にマーカーを配置
-                        buy_y.append(df_c['Low'].iloc[idx] * 0.96)
-                        buy_text.append(f"<b>【買いシグナル】 {d}</b><br>" + "<br>".join(sigs))
+                    # 売りシグナル
+                    s_sigs = []
+                    if pd.notna(row.get('Sig_DC')) and bool(row.get('Sig_DC')): s_sigs.append("デッドクロス(5日/20日)")
+                    if pd.notna(row.get('Sig_MACD_Sell')) and bool(row.get('Sig_MACD_Sell')): s_sigs.append("MACD下抜け")
+                    if pd.notna(row.get('Sig_Granville_Sell')) and bool(row.get('Sig_Granville_Sell')): s_sigs.append("グランビルの法則(売り)")
+                    if pd.notna(row.get('Sig_Ichimoku_Sell')) and bool(row.get('Sig_Ichimoku_Sell')): s_sigs.append("一目均衡表(三役逆転)")
+                    if pd.notna(row.get('Sig_Dow_Sell')) and bool(row.get('Sig_Dow_Sell')): s_sigs.append("ダウ理論(下落波)")
+                    
+                    if s_sigs:
+                        sell_x.append(idx)
+                        sell_y.append(row['High'] * 1.04)
+                        sell_text.append(f"<b>【売りシグナル】 {d}</b><br>" + "<br>".join(s_sigs))
                         
                 if buy_x:
                     fig.add_trace(go.Scatter(
@@ -440,27 +458,6 @@ if 'results' in st.session_state:
                         marker=dict(symbol='triangle-up', size=12, color='#E91E63', line=dict(width=1, color='white')),
                         name='買いシグナル点灯', hovertext=buy_text, hoverinfo='text'
                     ), row=1, col=1)
-
-                sell_signals = {}
-                for idx, row in df_c.iterrows():
-                    d = idx.strftime('%Y-%m-%d')
-                    sigs = []
-                    if row.get('Sig_DC'): sigs.append("デッドクロス(5日/20日)")
-                    if row.get('Sig_MACD_Sell'): sigs.append("MACD下抜け")
-                    if row.get('Sig_Granville_Sell'): sigs.append("グランビルの法則(売り)")
-                    if row.get('Sig_Ichimoku_Sell'): sigs.append("一目均衡表(三役逆転)")
-                    if row.get('Sig_Dow_Sell'): sigs.append("ダウ理論(下落波)")
-                    if sigs:
-                        sell_signals[d] = sigs
-                        
-                sell_x, sell_y, sell_text = [], [], []
-                for d, sigs in sell_signals.items():
-                    if d in df_c_dates:
-                        idx = df_c_dates.index(d)
-                        sell_x.append(df_c.index[idx])
-                        # ローソク足の高値の少し上（1.04倍）の位置にマーカーを配置
-                        sell_y.append(df_c['High'].iloc[idx] * 1.04)
-                        sell_text.append(f"<b>【売りシグナル】 {d}</b><br>" + "<br>".join(sigs))
                         
                 if sell_x:
                     fig.add_trace(go.Scatter(
