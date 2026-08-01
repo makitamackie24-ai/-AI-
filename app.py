@@ -389,10 +389,17 @@ def analyze_all_stocks():
             # AI予測
             prob_up, prob_box, prob_down = run_ai_prediction(df)
             
+            # --- 直近1週間（過去5営業日）の株価データを取得 ---
+            recent_ohlc = df.tail(5)[['Open', 'High', 'Low', 'Close']].copy()
+            recent_ohlc.index = recent_ohlc.index.strftime('%Y-%m-%d')
+            recent_ohlc.columns = ['始値', '高値', '安値', '終値']
+            recent_ohlc.index.name = '日付'
+            
             results.append({
                 "name": name,
                 "ticker": ticker,
                 "price": curr_close,
+                "recent_ohlc": recent_ohlc,
                 "trend": current_trend,
                 "is_box": "ボックストレンド" in current_trend,
                 "prob_up": prob_up,
@@ -463,6 +470,14 @@ if 'results' in st.session_state:
                 st.markdown(f"<span style='color: green; font-weight: bold;'>上昇トレンドになる確率: {res['prob_up']:.1f}%</span>", unsafe_allow_html=True)
                 st.markdown(f"<span style='color: gray; font-weight: bold;'>ボックストレンドになる確率: {res['prob_box']:.1f}%</span>", unsafe_allow_html=True)
                 st.markdown(f"<span style='color: red; font-weight: bold;'>下落トレンドになる確率: {res['prob_down']:.1f}%</span>", unsafe_allow_html=True)
+
+            st.markdown("##### 📅 直近1週間の株価推移")
+            # 5営業日分のデータをコンパクトなテーブルで表示
+            st.dataframe(
+                res['recent_ohlc'].style.format("¥{:,.0f}"), 
+                use_container_width=True, 
+                height=212
+            )
 
             st.markdown("---")
             
