@@ -389,6 +389,69 @@ def analyze_all_stocks():
             # AI予測
             prob_up, prob_box, prob_down = run_ai_prediction(df)
             
+            # --- 過去半年間のシグナル実績（平均変動率）の計算 ---
+            # 買いリターン計算 (5, 10, 15, 20営業日後)
+            df['Ret_Buy_5'] = (df['Close'].shift(-5) - df['Close']) / df['Close'] * 100
+            df['Ret_Buy_10'] = (df['Close'].shift(-10) - df['Close']) / df['Close'] * 100
+            df['Ret_Buy_15'] = (df['Close'].shift(-15) - df['Close']) / df['Close'] * 100
+            df['Ret_Buy_20'] = (df['Close'].shift(-20) - df['Close']) / df['Close'] * 100
+            
+            # 売りリターン計算 (1, 2, 3営業日後)
+            df['Ret_Sell_1'] = (df['Close'].shift(-1) - df['Close']) / df['Close'] * 100
+            df['Ret_Sell_2'] = (df['Close'].shift(-2) - df['Close']) / df['Close'] * 100
+            df['Ret_Sell_3'] = (df['Close'].shift(-3) - df['Close']) / df['Close'] * 100
+            
+            df_half = df.tail(150) # 過去半年分（約150営業日）を抽出
+            
+            buy_cols = {
+                "グランビルの法則(買い①: 買い転換)": "Sig_Granville_Buy_1",
+                "グランビルの法則(買い②: 押し目買い)": "Sig_Granville_Buy_2",
+                "グランビルの法則(買い③: 買い乗せ)": "Sig_Granville_Buy_3",
+                "ゴールデンクロス(5日/20日)": "Sig_GC",
+                "MACD上抜け": "Sig_MACD_Buy",
+                "ダウ理論(上昇波)": "Sig_Dow_Buy",
+                "一目均衡表(三役好転)": "Sig_Ichimoku_Buy"
+            }
+            
+            buy_stats = []
+            for s_name, col_name in buy_cols.items():
+                if col_name in df_half.columns:
+                    rows = df_half[df_half[col_name] == True]
+                    cnt = len(rows)
+                    if cnt > 0:
+                        buy_stats.append({
+                            "シグナル": s_name,
+                            "点灯回数": cnt,
+                            "1週間後": rows['Ret_Buy_5'].mean(),
+                            "2週間後": rows['Ret_Buy_10'].mean(),
+                            "3週間後": rows['Ret_Buy_15'].mean(),
+                            "4週間後": rows['Ret_Buy_20'].mean()
+                        })
+                        
+            sell_cols = {
+                "グランビルの法則(売り①: 売り転換)": "Sig_Granville_Sell_1",
+                "グランビルの法則(売り②: 戻り売り)": "Sig_Granville_Sell_2",
+                "グランビルの法則(売り③: 売り乗せ)": "Sig_Granville_Sell_3",
+                "デッドクロス(5日/20日)": "Sig_DC",
+                "MACD下抜け": "Sig_MACD_Sell",
+                "ダウ理論(下落波)": "Sig_Dow_Sell",
+                "一目均衡表(三役逆転)": "Sig_Ichimoku_Sell"
+            }
+            
+            sell_stats = []
+            for s_name, col_name in sell_cols.items():
+                if col_name in df_half.columns:
+                    rows = df_half[df_half[col_name] == True]
+                    cnt = len(rows)
+                    if cnt > 0:
+                        sell_stats.append({
+                            "シグナル": s_name,
+                            "点灯回数": cnt,
+                            "1日後": rows['Ret_Sell_1'].mean(),
+                            "2日後": rows['Ret_Sell_2'].mean(),
+                            "3日後": rows['Ret_Sell_3'].mean()
+                        })
+            
             # --- 直近1週間（過去5営業日）の株価データを取得 ---
             recent_ohlc = df.tail(5)[['Open', 'High', 'Low', 'Close']].copy()
             recent_ohlc.index = recent_ohlc.index.strftime('%Y-%m-%d')
@@ -423,6 +486,8 @@ def analyze_all_stocks():
                     "ダウ理論(下落波)": {"active": dow_down, "date": dow_date},
                     "一目均衡表(三役逆転)": {"active": ichimoku_down, "date": ichimoku_date}
                 },
+                "buy_stats": buy_stats,
+                "sell_stats": sell_stats,
                 "chart_data": df.tail(150).copy() # チャート描画用に直近約半年分のデータを保存
             })
             
@@ -504,6 +569,43 @@ if 'results' in st.session_state:
                         sell_count += 1
                 if sell_count == 0:
                     st.write("現在、点灯している売りシグナルはありません。")
+
+            # --- バックテスト結果の表示セクション ---
+            with st.expander("📈 過去半年間のシグナル実績（平均変動割合）"):
+                st.write("過去半年間に各シグナルが点灯した際、その後の終値が平均で何％変動したかを表示します。（＋なら上昇、－なら下落）")
+                
+                # 直近でシグナルが出たばかりで未来のデータがない場合は「-」で表示
+                
+                st.markdown("##### 🔵 買いシグナルの実績 (1〜4週間後)")
+                if res.get('buy_stats'):
+                    df_buy_stats = pd.DataFrame(res['buy_stats'])
+                    st.dataframe(
+                        df_buy_stats.style.format({
+                            "1週間後": "{:+.2f}%", 
+                            "2週間後": "{:+.2f}%", 
+                            "3週間後": "{:+.2f}%", 
+                            "4週間後": "{:+.2f}%"
+                        }, na_rep="-"),
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.write("過去半年に点灯した買いシグナルはありません。")
+                    
+                st.markdown("##### 🔴 売りシグナルの実績 (1〜3日後)")
+                if res.get('sell_stats'):
+                    df_sell_stats = pd.DataFrame(res['sell_stats'])
+                    st.dataframe(
+                        df_sell_stats.style.format({
+                            "1日後": "{:+.2f}%", 
+                            "2日後": "{:+.2f}%", 
+                            "3日後": "{:+.2f}%"
+                        }, na_rep="-"),
+                        hide_index=True,
+                        use_container_width=True
+                    )
+                else:
+                    st.write("過去半年に点灯した売りシグナルはありません。")
 
             # --- チャート表示セクション ---
             with st.expander("📊 ローソク足チャートを表示 (直近約半年分)"):
