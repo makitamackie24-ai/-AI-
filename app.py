@@ -319,10 +319,11 @@ def calculate_signal_score(signal_name, stats, is_buy):
         }
         prop = properties.get(signal_name, "中長期")
         
-        v1 = stats.get('1週間後', 0)
-        v2 = stats.get('2週間後', 0)
-        v3 = stats.get('3週間後', 0)
-        v4 = stats.get('4週間後', 0)
+        # 直近重視で計算された加重平均値(w_~)を使用する
+        v1 = stats.get('w_1週間後', 0)
+        v2 = stats.get('w_2週間後', 0)
+        v3 = stats.get('w_3週間後', 0)
+        v4 = stats.get('w_4週間後', 0)
         
         # 欠損値対応
         v1 = 0 if pd.isna(v1) else v1
@@ -360,10 +361,11 @@ def calculate_signal_score(signal_name, stats, is_buy):
         }
         prop = properties.get(signal_name, "中長期")
         
-        v1 = stats.get('1日後', 0)
-        v2 = stats.get('2日後', 0)
-        v3 = stats.get('3日後', 0)
-        vw = stats.get('1週間後', 0)
+        # 直近重視で計算された加重平均値(w_~)を使用する
+        v1 = stats.get('w_1日後', 0)
+        v2 = stats.get('w_2日後', 0)
+        v3 = stats.get('w_3日後', 0)
+        vw = stats.get('w_1週間後', 0)
         
         # 欠損値対応
         v1 = 0 if pd.isna(v1) else v1
@@ -503,8 +505,6 @@ def analyze_all_stocks():
             df['Ret_Sell_3'] = (df['Close'].shift(-3) - df['Close']) / df['Close'] * 100
             df['Ret_Sell_5'] = (df['Close'].shift(-5) - df['Close']) / df['Close'] * 100
             
-            df_half = df.tail(150) # 過去半年分（約150営業日）を抽出
-            
             buy_cols = {
                 "グランビルの法則(買い①: 買い転換)": "Sig_Granville_Buy_1",
                 "グランビルの法則(買い②: 押し目買い)": "Sig_Granville_Buy_2",
@@ -518,17 +518,31 @@ def analyze_all_stocks():
             buy_stats = []
             buy_scores = {}
             for s_name, col_name in buy_cols.items():
-                if col_name in df_half.columns:
-                    rows = df_half[df_half[col_name] == True]
+                if col_name in df.columns:
+                    rows = df[df[col_name] == True].copy()
                     cnt = len(rows)
                     if cnt > 0:
+                        # 直近を重視するための重み計算 (最新=1.0、3年前=約0.2)
+                        days_from_latest = (df.index[-1] - rows.index).days
+                        weights = np.clip(1.0 - (days_from_latest / 1095) * 0.8, 0.2, 1.0)
+                        
+                        def get_weighted_mean(col):
+                            valid_mask = ~rows[col].isna()
+                            if valid_mask.sum() == 0:
+                                return np.nan
+                            return np.average(rows.loc[valid_mask, col], weights=weights[valid_mask])
+
                         stat_dict = {
                             "シグナル": s_name,
                             "点灯回数": cnt,
                             "1週間後": rows['Ret_Buy_5'].mean(),
                             "2週間後": rows['Ret_Buy_10'].mean(),
                             "3週間後": rows['Ret_Buy_15'].mean(),
-                            "4週間後": rows['Ret_Buy_20'].mean()
+                            "4週間後": rows['Ret_Buy_20'].mean(),
+                            "w_1週間後": get_weighted_mean('Ret_Buy_5'),
+                            "w_2週間後": get_weighted_mean('Ret_Buy_10'),
+                            "w_3週間後": get_weighted_mean('Ret_Buy_15'),
+                            "w_4週間後": get_weighted_mean('Ret_Buy_20')
                         }
                         # スコア計算
                         score = calculate_signal_score(s_name, stat_dict, is_buy=True)
@@ -550,17 +564,30 @@ def analyze_all_stocks():
             sell_stats = []
             sell_scores = {}
             for s_name, col_name in sell_cols.items():
-                if col_name in df_half.columns:
-                    rows = df_half[df_half[col_name] == True]
+                if col_name in df.columns:
+                    rows = df[df[col_name] == True].copy()
                     cnt = len(rows)
                     if cnt > 0:
+                        days_from_latest = (df.index[-1] - rows.index).days
+                        weights = np.clip(1.0 - (days_from_latest / 1095) * 0.8, 0.2, 1.0)
+                        
+                        def get_weighted_mean(col):
+                            valid_mask = ~rows[col].isna()
+                            if valid_mask.sum() == 0:
+                                return np.nan
+                            return np.average(rows.loc[valid_mask, col], weights=weights[valid_mask])
+
                         stat_dict = {
                             "シグナル": s_name,
                             "点灯回数": cnt,
                             "1日後": rows['Ret_Sell_1'].mean(),
                             "2日後": rows['Ret_Sell_2'].mean(),
                             "3日後": rows['Ret_Sell_3'].mean(),
-                            "1週間後": rows['Ret_Sell_5'].mean()
+                            "1週間後": rows['Ret_Sell_5'].mean(),
+                            "w_1日後": get_weighted_mean('Ret_Sell_1'),
+                            "w_2日後": get_weighted_mean('Ret_Sell_2'),
+                            "w_3日後": get_weighted_mean('Ret_Sell_3'),
+                            "w_1週間後": get_weighted_mean('Ret_Sell_5')
                         }
                         # スコア計算
                         score = calculate_signal_score(s_name, stat_dict, is_buy=False)
@@ -723,19 +750,23 @@ if 'results' in st.session_state:
                     st.write("現在、点灯している売りシグナルはありません。")
 
             # --- バックテスト結果の表示セクション ---
-            with st.expander("📈 過去半年間のシグナル実績（平均変動割合）と精度スコア"):
+            with st.expander("📈 過去3年間のシグナル実績（平均変動割合）と精度スコア"):
                 st.markdown("""
-                過去半年間に各シグナルが点灯した際、その後の終値が平均で何％変動したかを表示します。（＋なら上昇、－なら下落）  
+                過去3年間に各シグナルが点灯した際、その後の終値が平均で何％変動したかを表示します。（＋なら上昇、－なら下落）  
                 **【精度スコアについて(100点満点)】**  
-                シグナルの性質（ダウ理論なら短期、MACDなら中長期など）に合わせて重視する期間の変動率を加重平均し、その銘柄においてどの程度「期待通りに機能しているか」を独自に点数化したものです。（70点以上は高精度）
+                シグナルの性質（ダウ理論なら短期、MACDなら中長期など）に合わせて重視する期間の変動率を加重平均し、その銘柄においてどの程度「期待通りに機能しているか」を独自に点数化したものです。  
+                ※精度スコアの算出においては、現在の相場環境への適応度を測るため、**直近のシグナル実績により大きなウェイト（重み）を置いて計算**しています。（70点以上は高精度）
                 """)
                 
                 st.markdown("##### 🔵 買いシグナルの実績 (1〜4週間後)")
                 if res.get('buy_stats'):
                     df_buy_stats = pd.DataFrame(res['buy_stats'])
                     
+                    # 不要な内部計算用カラム(w_~)を省いて表示
+                    display_cols = ["シグナル", "精度スコア", "点灯回数", "1週間後", "2週間後", "3週間後", "4週間後"]
+                    
                     # Styleを簡略化し、エラーを回避する
-                    styled_buy_df = df_buy_stats.style.format({
+                    styled_buy_df = df_buy_stats[display_cols].style.format({
                         "精度スコア": "{:.0f}",
                         "1週間後": "{:+.2f}%", 
                         "2週間後": "{:+.2f}%", 
@@ -755,8 +786,10 @@ if 'results' in st.session_state:
                 if res.get('sell_stats'):
                     df_sell_stats = pd.DataFrame(res['sell_stats'])
                     
+                    display_cols = ["シグナル", "精度スコア", "点灯回数", "1日後", "2日後", "3日後", "1週間後"]
+                    
                     # Styleを簡略化し、エラーを回避する
-                    styled_sell_df = df_sell_stats.style.format({
+                    styled_sell_df = df_sell_stats[display_cols].style.format({
                         "精度スコア": "{:.0f}",
                         "1日後": "{:+.2f}%", 
                         "2日後": "{:+.2f}%", 
