@@ -90,6 +90,10 @@ def add_technical_indicators(df):
     g_buy2 = cross_up & (sma20_diff > 0)
     # 買い③（買い乗せ）：20日線が上向きの時、5日線が下落するも20日線を下抜けず再度上昇
     g_buy3 = (sma20_diff > 0) & (df['SMA_5'] > df['SMA_20']) & (sma5_diff_prev < 0) & (sma5_diff > 0)
+    
+    df['Sig_Granville_Buy_1'] = g_buy1
+    df['Sig_Granville_Buy_2'] = g_buy2
+    df['Sig_Granville_Buy_3'] = g_buy3
     df['Sig_Granville_Buy'] = g_buy1 | g_buy2 | g_buy3
     
     # 売り①（売り転換）：20日線が一定期間上昇後、横ばいor下向きで、5日線が上から下へ抜ける
@@ -98,6 +102,10 @@ def add_technical_indicators(df):
     g_sell2 = cross_dn & (sma20_diff < 0)
     # 売り③（売り乗せ）：20日線が下向きの時、5日線が上昇するも20日線を上抜けず再度下落
     g_sell3 = (sma20_diff < 0) & (df['SMA_5'] < df['SMA_20']) & (sma5_diff_prev > 0) & (sma5_diff < 0)
+    
+    df['Sig_Granville_Sell_1'] = g_sell1
+    df['Sig_Granville_Sell_2'] = g_sell2
+    df['Sig_Granville_Sell_3'] = g_sell3
     df['Sig_Granville_Sell'] = g_sell1 | g_sell2 | g_sell3
     
     # 一目均衡表 (厳密な三役好転・三役逆転の判定)
@@ -337,14 +345,26 @@ def analyze_all_stocks():
                 
             # --- Step2 & 3: テクニカルサイン判定 ---
             # グランビルの法則 (直近1ヶ月間（20営業日）でシグナルが点灯しているか判定)
-            recent_g_buy = df['Sig_Granville_Buy'].tail(20)
-            recent_g_sell = df['Sig_Granville_Sell'].tail(20)
+            recent_g_buy1 = df['Sig_Granville_Buy_1'].tail(20)
+            recent_g_buy2 = df['Sig_Granville_Buy_2'].tail(20)
+            recent_g_buy3 = df['Sig_Granville_Buy_3'].tail(20)
             
-            granville_buy = bool(recent_g_buy.any())
-            granville_buy_date = pd.to_datetime(recent_g_buy[recent_g_buy == True].index[-1]).strftime('%Y-%m-%d') if granville_buy else None
+            recent_g_sell1 = df['Sig_Granville_Sell_1'].tail(20)
+            recent_g_sell2 = df['Sig_Granville_Sell_2'].tail(20)
+            recent_g_sell3 = df['Sig_Granville_Sell_3'].tail(20)
             
-            granville_sell = bool(recent_g_sell.any())
-            granville_sell_date = pd.to_datetime(recent_g_sell[recent_g_sell == True].index[-1]).strftime('%Y-%m-%d') if granville_sell else None
+            def get_signal_info(series):
+                active = bool(series.any())
+                date = pd.to_datetime(series[series == True].index[-1]).strftime('%Y-%m-%d') if active else None
+                return active, date
+                
+            gb1_act, gb1_date = get_signal_info(recent_g_buy1)
+            gb2_act, gb2_date = get_signal_info(recent_g_buy2)
+            gb3_act, gb3_date = get_signal_info(recent_g_buy3)
+            
+            gs1_act, gs1_date = get_signal_info(recent_g_sell1)
+            gs2_act, gs2_date = get_signal_info(recent_g_sell2)
+            gs3_act, gs3_date = get_signal_info(recent_g_sell3)
                     
             latest_date_str = pd.to_datetime(df.index[-1]).strftime('%Y-%m-%d')
             
@@ -379,14 +399,18 @@ def analyze_all_stocks():
                 "prob_box": prob_box,
                 "prob_down": prob_down,
                 "signals_buy": {
-                    "グランビルの法則(買い)": {"active": granville_buy, "date": granville_buy_date},
+                    "グランビルの法則(買い①: 買い転換)": {"active": gb1_act, "date": gb1_date},
+                    "グランビルの法則(買い②: 押し目買い)": {"active": gb2_act, "date": gb2_date},
+                    "グランビルの法則(買い③: 買い乗せ)": {"active": gb3_act, "date": gb3_date},
                     "ゴールデンクロス(5日/20日)": {"active": gc, "date": latest_date_str},
                     "MACD上抜け": {"active": macd_buy, "date": latest_date_str},
                     "ダウ理論(上昇波)": {"active": dow_up, "date": dow_date},
                     "一目均衡表(三役好転)": {"active": ichimoku_up, "date": ichimoku_date}
                 },
                 "signals_sell": {
-                    "グランビルの法則(売り)": {"active": granville_sell, "date": granville_sell_date},
+                    "グランビルの法則(売り①: 売り転換)": {"active": gs1_act, "date": gs1_date},
+                    "グランビルの法則(売り②: 戻り売り)": {"active": gs2_act, "date": gs2_date},
+                    "グランビルの法則(売り③: 売り乗せ)": {"active": gs3_act, "date": gs3_date},
                     "デッドクロス(5日/20日)": {"active": dc, "date": latest_date_str},
                     "MACD下抜け": {"active": macd_sell, "date": latest_date_str},
                     "ダウ理論(下落波)": {"active": dow_down, "date": dow_date},
@@ -495,7 +519,9 @@ if 'results' in st.session_state:
                     b_sigs = []
                     if pd.notna(row.get('Sig_GC')) and bool(row.get('Sig_GC')): b_sigs.append("ゴールデンクロス(5日/20日)")
                     if pd.notna(row.get('Sig_MACD_Buy')) and bool(row.get('Sig_MACD_Buy')): b_sigs.append("MACD上抜け")
-                    if pd.notna(row.get('Sig_Granville_Buy')) and bool(row.get('Sig_Granville_Buy')): b_sigs.append("グランビルの法則(買い)")
+                    if pd.notna(row.get('Sig_Granville_Buy_1')) and bool(row.get('Sig_Granville_Buy_1')): b_sigs.append("グランビルの法則(買い①: 買い転換)")
+                    if pd.notna(row.get('Sig_Granville_Buy_2')) and bool(row.get('Sig_Granville_Buy_2')): b_sigs.append("グランビルの法則(買い②: 押し目買い)")
+                    if pd.notna(row.get('Sig_Granville_Buy_3')) and bool(row.get('Sig_Granville_Buy_3')): b_sigs.append("グランビルの法則(買い③: 買い乗せ)")
                     if pd.notna(row.get('Sig_Ichimoku_Buy')) and bool(row.get('Sig_Ichimoku_Buy')): b_sigs.append("一目均衡表(三役好転)")
                     if pd.notna(row.get('Sig_Dow_Buy')) and bool(row.get('Sig_Dow_Buy')): b_sigs.append("ダウ理論(上昇波)")
                     
@@ -508,7 +534,9 @@ if 'results' in st.session_state:
                     s_sigs = []
                     if pd.notna(row.get('Sig_DC')) and bool(row.get('Sig_DC')): s_sigs.append("デッドクロス(5日/20日)")
                     if pd.notna(row.get('Sig_MACD_Sell')) and bool(row.get('Sig_MACD_Sell')): s_sigs.append("MACD下抜け")
-                    if pd.notna(row.get('Sig_Granville_Sell')) and bool(row.get('Sig_Granville_Sell')): s_sigs.append("グランビルの法則(売り)")
+                    if pd.notna(row.get('Sig_Granville_Sell_1')) and bool(row.get('Sig_Granville_Sell_1')): s_sigs.append("グランビルの法則(売り①: 売り転換)")
+                    if pd.notna(row.get('Sig_Granville_Sell_2')) and bool(row.get('Sig_Granville_Sell_2')): s_sigs.append("グランビルの法則(売り②: 戻り売り)")
+                    if pd.notna(row.get('Sig_Granville_Sell_3')) and bool(row.get('Sig_Granville_Sell_3')): s_sigs.append("グランビルの法則(売り③: 売り乗せ)")
                     if pd.notna(row.get('Sig_Ichimoku_Sell')) and bool(row.get('Sig_Ichimoku_Sell')): s_sigs.append("一目均衡表(三役逆転)")
                     if pd.notna(row.get('Sig_Dow_Sell')) and bool(row.get('Sig_Dow_Sell')): s_sigs.append("ダウ理論(下落波)")
                     
