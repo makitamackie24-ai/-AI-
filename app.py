@@ -81,23 +81,28 @@ def check_dow_theory(df):
     
     up_trend = False
     down_trend = False
+    trigger_date = None
     
     # 高値と安値がそれぞれ2つ以上ある場合のみ判定
     if len(highs) >= 2 and len(lows) >= 2:
         h1, h2 = highs[-2], highs[-1] # 最後から2番目と最後の高値
         l1, l2 = lows[-2], lows[-1]   # 最後から2番目と最後の安値
         
+        last_h_idx = period_df['Local_Max'].dropna().index[-1]
+        last_l_idx = period_df['Local_Min'].dropna().index[-1]
+        trigger_date = pd.to_datetime(max(last_h_idx, last_l_idx)).strftime('%Y-%m-%d')
+        
         if h2 > h1 and l2 > l1:
             up_trend = True
         elif h2 < h1 and l2 < l1:
             down_trend = True
             
-    return up_trend, down_trend
+    return up_trend, down_trend, trigger_date
 
 # --- 一目均衡表判定 ---
 def check_ichimoku(df):
     if len(df) < 52:
-        return False, False
+        return False, False, None
         
     curr = df.iloc[-1]
     past_26 = df.iloc[-26] # 遅行スパンとの比較対象 (26日前のローソク足)
@@ -117,7 +122,9 @@ def check_ichimoku(df):
     cond3_dn = curr['Close'] < past_26['Close']
     dn_turn = bool(cond1_dn and cond2_dn and cond3_dn)
     
-    return up_turn, dn_turn
+    trigger_date = pd.to_datetime(curr.name).strftime('%Y-%m-%d')
+    
+    return up_turn, dn_turn, trigger_date
 
 # --- AI予測モデル学習・推論 ---
 def run_ai_prediction(df):
@@ -209,18 +216,28 @@ def analyze_all_stocks():
             # --- Step2 & 3: テクニカルサイン判定 ---
             # グランビルの法則 (直近1ヶ月間（20営業日）でクロスが発生しているか判定)
             granville_buy = False
+            granville_buy_date = None
             granville_sell = False
+            granville_sell_date = None
             for j in range(1, 21): # 検出期間を直近20日間に拡大
                 c0, c1 = get_val(df['Close'], -j), get_val(df['Close'], -(j+1))
                 s0, s1 = get_val(df['SMA_20'], -j), get_val(df['SMA_20'], -(j+1))
                 
+                curr_date_str = pd.to_datetime(df.index[-j]).strftime('%Y-%m-%d')
+                
                 # 買い: 20日線が上向きor横ばいで、株価が下から上へクロス
                 if s0 >= s1 and c0 > s0 and c1 <= s1:
-                    granville_buy = True
+                    if not granville_buy:
+                        granville_buy = True
+                        granville_buy_date = curr_date_str
                 # 売り: 20日線が下向きor横ばいで、株価が上から下へクロス
                 if s0 <= s1 and c0 < s0 and c1 >= s1:
-                    granville_sell = True
+                    if not granville_sell:
+                        granville_sell = True
+                        granville_sell_date = curr_date_str
                     
+            latest_date_str = pd.to_datetime(df.index[-1]).strftime('%Y-%m-%d')
+            
             # 移動平均線クロス (5日線と20日線)
             sma5_0, sma5_1 = get_val(df['SMA_5']), get_val(df['SMA_5'], -2)
             sma20_0, sma20_1 = curr_sma20, get_val(df['SMA_20'], -2)
@@ -234,10 +251,10 @@ def analyze_all_stocks():
             macd_sell = bool(macd_0 < sig_0 and macd_1 >= sig_1)
             
             # ダウ理論
-            dow_up, dow_down = check_dow_theory(df)
+            dow_up, dow_down, dow_date = check_dow_theory(df)
             
             # 一目均衡表
-            ichimoku_up, ichimoku_down = check_ichimoku(df)
+            ichimoku_up, ichimoku_down, ichimoku_date = check_ichimoku(df)
             
             # AI予測 (ボックストレンドの場合に確率を表示)
             prob_up, prob_down = run_ai_prediction(df)
@@ -251,18 +268,18 @@ def analyze_all_stocks():
                 "prob_up": prob_up,
                 "prob_down": prob_down,
                 "signals_buy": {
-                    "グランビルの法則(買い)": granville_buy,
-                    "ゴールデンクロス(5日/20日)": gc,
-                    "MACD上抜け": macd_buy,
-                    "ダウ理論(上昇波)": dow_up,
-                    "一目均衡表(三役好転)": ichimoku_up
+                    "グランビルの法則(買い)": {"active": granville_buy, "date": granville_buy_date},
+                    "ゴールデンクロス(5日/20日)": {"active": gc, "date": latest_date_str},
+                    "MACD上抜け": {"active": macd_buy, "date": latest_date_str},
+                    "ダウ理論(上昇波)": {"active": dow_up, "date": dow_date},
+                    "一目均衡表(三役好転)": {"active": ichimoku_up, "date": ichimoku_date}
                 },
                 "signals_sell": {
-                    "グランビルの法則(売り)": granville_sell,
-                    "デッドクロス(5日/20日)": dc,
-                    "MACD下抜け": macd_sell,
-                    "ダウ理論(下落波)": dow_down,
-                    "一目均衡表(三役逆転)": ichimoku_down
+                    "グランビルの法則(売り)": {"active": granville_sell, "date": granville_sell_date},
+                    "デッドクロス(5日/20日)": {"active": dc, "date": latest_date_str},
+                    "MACD下抜け": {"active": macd_sell, "date": latest_date_str},
+                    "ダウ理論(下落波)": {"active": dow_down, "date": dow_date},
+                    "一目均衡表(三役逆転)": {"active": ichimoku_down, "date": ichimoku_date}
                 }
             })
             
@@ -313,9 +330,10 @@ if 'results' in st.session_state:
             with col_buy:
                 st.markdown("#### 🔵 Step2: 買いタイミングのシグナル")
                 buy_count = 0
-                for sig_name, is_active in res['signals_buy'].items():
-                    if is_active:
-                        st.markdown(f"- ✅ **{sig_name}** 点灯")
+                for sig_name, sig_data in res['signals_buy'].items():
+                    if sig_data['active']:
+                        date_str = f" [{sig_data['date']}]" if sig_data['date'] else ""
+                        st.markdown(f"- ✅ **{sig_name}** 点灯 {date_str}")
                         buy_count += 1
                 if buy_count == 0:
                     st.write("現在、点灯している買いシグナルはありません。")
@@ -323,9 +341,10 @@ if 'results' in st.session_state:
             with col_sell:
                 st.markdown("#### 🔴 Step3: 売りタイミングのシグナル")
                 sell_count = 0
-                for sig_name, is_active in res['signals_sell'].items():
-                    if is_active:
-                        st.markdown(f"- ⚠️ **{sig_name}** 点灯")
+                for sig_name, sig_data in res['signals_sell'].items():
+                    if sig_data['active']:
+                        date_str = f" [{sig_data['date']}]" if sig_data['date'] else ""
+                        st.markdown(f"- ⚠️ **{sig_name}** 点灯 {date_str}")
                         sell_count += 1
                 if sell_count == 0:
                     st.write("現在、点灯している売りシグナルはありません。")
