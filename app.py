@@ -5,6 +5,8 @@ import numpy as np
 import time
 from datetime import datetime, timedelta
 from sklearn.ensemble import RandomForestClassifier
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # --- ページ設定 ---
 st.set_page_config(
@@ -280,7 +282,8 @@ def analyze_all_stocks():
                     "MACD下抜け": {"active": macd_sell, "date": latest_date_str},
                     "ダウ理論(下落波)": {"active": dow_down, "date": dow_date},
                     "一目均衡表(三役逆転)": {"active": ichimoku_down, "date": ichimoku_date}
-                }
+                },
+                "chart_data": df.tail(150).copy() # チャート描画用に直近約半年分のデータを保存
             })
             
         except Exception as e:
@@ -348,3 +351,35 @@ if 'results' in st.session_state:
                         sell_count += 1
                 if sell_count == 0:
                     st.write("現在、点灯している売りシグナルはありません。")
+
+            # --- チャート表示セクション ---
+            with st.expander("📊 ローソク足チャートを表示 (直近約半年分)"):
+                df_c = res['chart_data']
+                
+                # 2行1列のサブプロット作成 (上: ローソク足, 下: 出来高)
+                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.7, 0.3])
+                
+                # ローソク足
+                fig.add_trace(go.Candlestick(x=df_c.index, open=df_c['Open'], high=df_c['High'], low=df_c['Low'], close=df_c['Close'], name='株価'), row=1, col=1)
+                
+                # 移動平均線 (5日線・20日線)
+                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_5'], line=dict(color='orange', width=1.5), name='5日線'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=df_c.index, y=df_c['SMA_20'], line=dict(color='blue', width=1.5), name='20日線'), row=1, col=1)
+                
+                # 出来高 (陽線は緑系、陰線は赤系で色分け)
+                colors = ['#ef5350' if row['Close'] < row['Open'] else '#26a69a' for index, row in df_c.iterrows()]
+                fig.add_trace(go.Bar(x=df_c.index, y=df_c['Volume'], marker_color=colors, name='出来高'), row=2, col=1)
+                
+                # レイアウト調整
+                fig.update_layout(
+                    height=500, 
+                    margin=dict(l=0, r=0, t=30, b=0), 
+                    xaxis_rangeslider_visible=False, # ローソク足標準のレンジスライダーを非表示
+                    showlegend=True,
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                
+                # 土日などの休場日の空白を詰める処理
+                fig.update_xaxes(rangebreaks=[dict(bounds=["sat", "mon"])])
+                
+                st.plotly_chart(fig, use_container_width=True)
