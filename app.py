@@ -79,14 +79,44 @@ def add_technical_indicators(df):
     df['Sig_Granville_Buy'] = (df['SMA_20'] >= df['SMA_20'].shift(1)) & (df['Close'] > df['SMA_20']) & (df['Close'].shift(1) <= df['SMA_20'].shift(1))
     df['Sig_Granville_Sell'] = (df['SMA_20'] <= df['SMA_20'].shift(1)) & (df['Close'] < df['SMA_20']) & (df['Close'].shift(1) >= df['SMA_20'].shift(1))
     
-    # 一目均衡表
+    # 一目均衡表 (厳密な三役好転・三役逆転の判定)
     cloud_top = df[['Senkou1', 'Senkou2']].max(axis=1)
     cloud_bottom = df[['Senkou1', 'Senkou2']].min(axis=1)
-    ichimoku_buy = (df['Tenkan'] > df['Kijun']) & (df['Close'] > cloud_top) & (df['Close'] > df['Close'].shift(26))
-    df['Sig_Ichimoku_Buy'] = ichimoku_buy & ~ichimoku_buy.shift(1).fillna(False)
     
-    ichimoku_sell = (df['Tenkan'] < df['Kijun']) & (df['Close'] < cloud_bottom) & (df['Close'] < df['Close'].shift(26))
-    df['Sig_Ichimoku_Sell'] = ichimoku_sell & ~ichimoku_sell.shift(1).fillna(False)
+    # --- 買い（三役好転）状態の定義 ---
+    # 1. 転換線が基準線を上回る
+    cond_tenkan_up = df['Tenkan'] > df['Kijun']
+    # 2. 遅行スパン(当日の終値)が、26日前のローソク足の上限(高値)を上回る
+    cond_chikou_up = df['Close'] > df['High'].shift(26)
+    # 3. ローソク足が雲の上限を上回る
+    cond_kumo_up = df['Close'] > cloud_top
+    
+    all_up_today = cond_tenkan_up & cond_chikou_up & cond_kumo_up
+    
+    # いずれかの条件が「今日」新たに成立（クロス）したか
+    cross_tenkan_up = cond_tenkan_up & (df['Tenkan'].shift(1) <= df['Kijun'].shift(1))
+    cross_chikou_up = cond_chikou_up & (df['Close'].shift(1) <= df['High'].shift(27)) # 昨日の終値が、実質27日前の高値以下
+    cross_kumo_up = cond_kumo_up & (df['Close'].shift(1) <= cloud_top.shift(1))
+    
+    # 三役好転: 3つの条件を全て満たし、かつ、今日どれかの条件が新たにクロスして達成された日のみ検出
+    df['Sig_Ichimoku_Buy'] = all_up_today & (cross_tenkan_up | cross_chikou_up | cross_kumo_up)
+    
+    # --- 売り（三役逆転）状態の定義 ---
+    # 1. 転換線が基準線を下回る
+    cond_tenkan_dn = df['Tenkan'] < df['Kijun']
+    # 2. 遅行スパン(当日の終値)が、26日前のローソク足の下限(安値)を下回る
+    cond_chikou_dn = df['Close'] < df['Low'].shift(26)
+    # 3. ローソク足が雲の下限を下回る
+    cond_kumo_dn = df['Close'] < cloud_bottom
+    
+    all_dn_today = cond_tenkan_dn & cond_chikou_dn & cond_kumo_dn
+    
+    cross_tenkan_dn = cond_tenkan_dn & (df['Tenkan'].shift(1) >= df['Kijun'].shift(1))
+    cross_chikou_dn = cond_chikou_dn & (df['Close'].shift(1) >= df['Low'].shift(27))
+    cross_kumo_dn = cond_kumo_dn & (df['Close'].shift(1) >= cloud_bottom.shift(1))
+    
+    # 三役逆転: 3つの条件を全て満たし、かつ、今日どれかの条件が新たにクロスして達成された日のみ検出
+    df['Sig_Ichimoku_Sell'] = all_dn_today & (cross_tenkan_dn | cross_chikou_dn | cross_kumo_dn)
     
     # ダウ理論 (簡易ベクトル判定)
     df['Local_Max'] = df['High'][(df['High'] == df['High'].rolling(5, center=True).max())]
@@ -144,28 +174,40 @@ def check_dow_theory(df):
 
 # --- 一目均衡表判定 ---
 def check_ichimoku(df):
-    if len(df) < 52:
+    if len(df) < 52 or 'Sig_Ichimoku_Buy' not in df.columns:
         return False, False, None
         
-    curr = df.iloc[-1]
-    past_26 = df.iloc[-26] # 遅行スパンとの比較対象 (26日前のローソク足)
+    # 直近5日間で三役好転/逆転の「シグナル」が点灯し、
+    # かつ最新日現在もその「状態」が崩れずに継続しているかを判定する
+    recent_buy_sigs = df['Sig_Ichimoku_Buy'].tail(5)
+    recent_sell_sigs = df['Sig_Ichimoku_Sell'].tail(5)
     
-    cloud_top = max(curr['Senkou1'], curr['Senkou2'])
-    cloud_bottom = min(curr['Senkou1'], curr['Senkou2'])
+    # 最新日の「状態」を確認
+    cloud_top = max(df['Senkou1'].iloc[-1], df['Senkou2'].iloc[-1])
+    cloud_bottom = min(df['Senkou1'].iloc[-1], df['Senkou2'].iloc[-1])
     
-    # 三役好転
-    cond1_up = curr['Tenkan'] > curr['Kijun'] # 転換線が基準線を上回る
-    cond2_up = curr['Close'] > cloud_top      # ローソク足が雲を上抜ける
-    cond3_up = curr['Close'] > past_26['Close'] # 今の終値(遅行スパン)が26日前の株価を上回る
-    up_turn = bool(cond1_up and cond2_up and cond3_up)
+    is_up_state = (df['Tenkan'].iloc[-1] > df['Kijun'].iloc[-1]) and \
+                  (df['Close'].iloc[-1] > df['High'].iloc[-26]) and \
+                  (df['Close'].iloc[-1] > cloud_top)
+                  
+    is_dn_state = (df['Tenkan'].iloc[-1] < df['Kijun'].iloc[-1]) and \
+                  (df['Close'].iloc[-1] < df['Low'].iloc[-26]) and \
+                  (df['Close'].iloc[-1] < cloud_bottom)
     
-    # 三役逆転
-    cond1_dn = curr['Tenkan'] < curr['Kijun']
-    cond2_dn = curr['Close'] < cloud_bottom
-    cond3_dn = curr['Close'] < past_26['Close']
-    dn_turn = bool(cond1_dn and cond2_dn and cond3_dn)
+    up_turn = False
+    dn_turn = False
+    trigger_date = None
     
-    trigger_date = pd.to_datetime(curr.name).strftime('%Y-%m-%d')
+    if is_up_state and recent_buy_sigs.any():
+        up_turn = True
+        # 直近5日間の中で最後にシグナルが点灯した日付を取得
+        trigger_idx = recent_buy_sigs[recent_buy_sigs == True].index[-1]
+        trigger_date = pd.to_datetime(trigger_idx).strftime('%Y-%m-%d')
+        
+    elif is_dn_state and recent_sell_sigs.any():
+        dn_turn = True
+        trigger_idx = recent_sell_sigs[recent_sell_sigs == True].index[-1]
+        trigger_date = pd.to_datetime(trigger_idx).strftime('%Y-%m-%d')
     
     return up_turn, dn_turn, trigger_date
 
@@ -469,14 +511,14 @@ if 'results' in st.session_state:
                 if buy_x:
                     fig.add_trace(go.Scatter(
                         x=buy_x, y=buy_y, mode='markers',
-                        marker=dict(symbol='triangle-up', size=12, color='#E91E63', line=dict(width=1, color='white')),
+                        marker=dict(symbol='triangle-up', size=12, color='#00BCD4', line=dict(width=1, color='white')),
                         name='買いシグナル点灯', hovertext=buy_text, hoverinfo='text'
                     ), row=1, col=1)
                         
                 if sell_x:
                     fig.add_trace(go.Scatter(
                         x=sell_x, y=sell_y, mode='markers',
-                        marker=dict(symbol='triangle-down', size=12, color='#00BCD4', line=dict(width=1, color='white')),
+                        marker=dict(symbol='triangle-down', size=12, color='#E91E63', line=dict(width=1, color='white')),
                         name='売りシグナル点灯', hovertext=sell_text, hoverinfo='text'
                     ), row=1, col=1)
                 
