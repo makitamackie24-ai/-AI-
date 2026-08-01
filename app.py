@@ -171,42 +171,58 @@ def check_ichimoku(df):
 
 # --- AI予測モデル学習・推論 ---
 def run_ai_prediction(df):
-    # 未来20営業日後の価格変化率を計算 (+5%で上昇トレンド、-5%で下落トレンドと定義)
-    df['Future_Return'] = df['Close'].shift(-20) / df['Close'] - 1.0
+    # 未来（20営業日後）のトレンドを判定するための特徴量をシフトして作成
+    df['Future_Close'] = df['Close'].shift(-20)
+    df['Future_SMA_20'] = df['SMA_20'].shift(-20)
+    df['Future_Past5_SMA_20'] = df['SMA_20'].shift(-15) # 20日後の時点での「5日前の20日線」
     
-    # 目的変数クラス作成
-    df['Target_Up'] = (df['Future_Return'] >= 0.05).astype(int)
-    df['Target_Down'] = (df['Future_Return'] <= -0.05).astype(int)
+    # 未来の20日線の傾き
+    df['Future_SMA20_Slope'] = (df['Future_SMA_20'] - df['Future_Past5_SMA_20']) / df['Future_Past5_SMA_20'] * 100
+    
+    # 未来のトレンドラベル付け (1: 上昇, -1: 下落, 0: ボックス)
+    conditions = [
+        (df['Future_SMA20_Slope'] > 0.3) & (df['Future_Close'] > df['Future_SMA_20']),
+        (df['Future_SMA20_Slope'] < -0.3) & (df['Future_Close'] < df['Future_SMA_20'])
+    ]
+    choices = [1, -1]
+    df['Future_Trend'] = np.select(conditions, choices, default=0)
+    
+    # 欠損値を含む行（直近20日分などは未来がNaNになるため）の除外用のマスク
+    mask = df['Future_Close'].notna() & df['Future_SMA_20'].notna() & df['Future_Past5_SMA_20'].notna()
     
     features = ['Close', 'SMA_5', 'SMA_20', 'MACD', 'MACD_Signal', 'RSI']
     
-    # NaNを含む行（直近20日分や移動平均計算初期）を除外して学習データ作成
-    train_df = df.dropna(subset=features + ['Future_Return']).copy()
+    # NaNを含む行を除外して学習データ作成
+    train_df = df[mask].dropna(subset=features).copy()
     
     if len(train_df) < 100:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0
         
     X = train_df[features]
+    y = train_df['Future_Trend']
     
-    # 上昇予測モデル (木200本)
-    y_up = train_df['Target_Up']
-    if len(y_up.unique()) > 1:
-        model_up = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42)
-        model_up.fit(X, y_up)
-        prob_up = model_up.predict_proba(df[features].iloc[-1:])[:, 1][0]
-    else:
-        prob_up = 0.0
+    # 3クラス分類モデル (木200本)
+    classes = y.unique()
+    if len(classes) > 1:
+        model = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42)
+        model.fit(X, y)
         
-    # 下落予測モデル (木200本)
-    y_down = train_df['Target_Down']
-    if len(y_down.unique()) > 1:
-        model_down = RandomForestClassifier(n_estimators=200, class_weight='balanced', random_state=42)
-        model_down.fit(X, y_down)
-        prob_down = model_down.predict_proba(df[features].iloc[-1:])[:, 1][0]
-    else:
-        prob_down = 0.0
+        # 予測
+        probas = model.predict_proba(df[features].iloc[-1:])
         
-    return prob_up * 100, prob_down * 100
+        # predict_probaの結果は model.classes_ の順序に従うため、辞書化して取得
+        prob_dict = {cls: prob for cls, prob in zip(model.classes_, probas[0])}
+        
+        prob_up = prob_dict.get(1, 0.0) * 100
+        prob_box = prob_dict.get(0, 0.0) * 100
+        prob_down = prob_dict.get(-1, 0.0) * 100
+    else:
+        # 学習データが全て同じクラスの場合
+        prob_up = 100.0 if classes[0] == 1 else 0.0
+        prob_box = 100.0 if classes[0] == 0 else 0.0
+        prob_down = 100.0 if classes[0] == -1 else 0.0
+        
+    return prob_up, prob_box, prob_down
 
 # --- メイン解析処理 ---
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -299,8 +315,8 @@ def analyze_all_stocks():
             # 一目均衡表
             ichimoku_up, ichimoku_down, ichimoku_date = check_ichimoku(df)
             
-            # AI予測 (ボックストレンドの場合に確率を表示)
-            prob_up, prob_down = run_ai_prediction(df)
+            # AI予測
+            prob_up, prob_box, prob_down = run_ai_prediction(df)
             
             results.append({
                 "name": name,
@@ -309,6 +325,7 @@ def analyze_all_stocks():
                 "trend": current_trend,
                 "is_box": "ボックストレンド" in current_trend,
                 "prob_up": prob_up,
+                "prob_box": prob_box,
                 "prob_down": prob_down,
                 "signals_buy": {
                     "グランビルの法則(買い)": {"active": granville_buy, "date": granville_buy_date},
@@ -367,13 +384,10 @@ if 'results' in st.session_state:
                 st.markdown(f"<h4 style='color: {trend_color};'>{res['trend']}</h4>", unsafe_allow_html=True)
                 
             with col_ai:
-                if res['is_box']:
-                    st.markdown("##### 🤖 AI予測 (現在ボックス圏のため)")
-                    st.markdown(f"<span style='color: #1976D2; font-weight: bold;'>1ヶ月後に上昇トレンドに乗る確率: {res['prob_up']:.1f}%</span>", unsafe_allow_html=True)
-                    st.markdown(f"<span style='color: #D32F2F; font-weight: bold;'>1ヶ月後に下落トレンドに乗る確率: {res['prob_down']:.1f}%</span>", unsafe_allow_html=True)
-                else:
-                    st.markdown("##### 🤖 AI予測")
-                    st.write("※現在ボックストレンドではないため、トレンド転換確率の予測はスキップしています。")
+                st.markdown("##### 🤖 AI予測 (1ヶ月後のトレンド確率)")
+                st.markdown(f"<span style='color: green; font-weight: bold;'>上昇トレンドになる確率: {res['prob_up']:.1f}%</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color: gray; font-weight: bold;'>ボックストレンドになる確率: {res['prob_box']:.1f}%</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='color: red; font-weight: bold;'>下落トレンドになる確率: {res['prob_down']:.1f}%</span>", unsafe_allow_html=True)
 
             st.markdown("---")
             
