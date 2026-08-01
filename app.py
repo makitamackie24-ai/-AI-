@@ -295,6 +295,107 @@ def run_ai_prediction(df):
         
     return prob_up, prob_box, prob_down
 
+# --- シグナルスコア計算関数 ---
+def calculate_signal_score(signal_name, stats, is_buy):
+    """
+    バックテストの平均変動率から、各シグナルの性質（中長期・短中期・短期）に
+    合わせたウェイト付けを行い、0〜100点のスコアを算出する。
+    """
+    if not stats or pd.isna(stats.get('1週間後')):
+        return None # データ不足
+
+    score = 0
+    
+    if is_buy:
+        # 買いシグナルの性質定義
+        properties = {
+            "グランビルの法則(買い①: 買い転換)": "中長期",
+            "グランビルの法則(買い②: 押し目買い)": "中長期",
+            "グランビルの法則(買い③: 買い乗せ)": "短中期",
+            "ゴールデンクロス(5日/20日)": "中長期",
+            "MACD上抜け": "中長期",
+            "ダウ理論(上昇波)": "短期",
+            "一目均衡表(三役好転)": "中長期"
+        }
+        prop = properties.get(signal_name, "中長期")
+        
+        v1 = stats.get('1週間後', 0)
+        v2 = stats.get('2週間後', 0)
+        v3 = stats.get('3週間後', 0)
+        v4 = stats.get('4週間後', 0)
+        
+        # 欠損値対応
+        v1 = 0 if pd.isna(v1) else v1
+        v2 = 0 if pd.isna(v2) else v2
+        v3 = 0 if pd.isna(v3) else v3
+        v4 = 0 if pd.isna(v4) else v4
+
+        if prop == "短期":
+            # 1週間後を最重視、次いで2週間後
+            weighted_return = (v1 * 0.7) + (v2 * 0.3)
+        elif prop == "短中期":
+            # 2週間後、3週間後をバランスよく
+            weighted_return = (v1 * 0.1) + (v2 * 0.45) + (v3 * 0.45)
+        else: # 中長期
+            # 3週間後、4週間後を最重視
+            weighted_return = (v2 * 0.1) + (v3 * 0.4) + (v4 * 0.5)
+            
+        # 変動率(%)を点数化 (例: 平均+3%で約70点、+5%以上で90点超えを想定したロジック)
+        # sigmoid的なカーブで0-100に収める簡易計算
+        base = max(0, weighted_return) # マイナスリターンは0点ベース
+        score = min(100, int(base * 15 + 40)) if base > 0 else 0
+        if score > 0 and base > 0.5:
+             score = min(100, int(50 + base * 10))
+
+    else:
+        # 売りシグナルの性質定義 (買いの反対)
+        properties = {
+            "グランビルの法則(売り①: 売り転換)": "中長期",
+            "グランビルの法則(売り②: 戻り売り)": "中長期",
+            "グランビルの法則(売り③: 売り乗せ)": "短中期",
+            "デッドクロス(5日/20日)": "中長期",
+            "MACD下抜け": "中長期",
+            "ダウ理論(下落波)": "短期",
+            "一目均衡表(三役逆転)": "中長期"
+        }
+        prop = properties.get(signal_name, "中長期")
+        
+        v1 = stats.get('1日後', 0)
+        v2 = stats.get('2日後', 0)
+        v3 = stats.get('3日後', 0)
+        vw = stats.get('1週間後', 0)
+        
+        # 欠損値対応
+        v1 = 0 if pd.isna(v1) else v1
+        v2 = 0 if pd.isna(v2) else v2
+        v3 = 0 if pd.isna(v3) else v3
+        vw = 0 if pd.isna(vw) else vw
+        
+        # 売りは下落（マイナス）で成功なので、符号を反転させて評価
+        v1, v2, v3, vw = -v1, -v2, -v3, -vw
+
+        if prop == "短期":
+            # 1〜3日後を重視
+            weighted_return = (v1 * 0.4) + (v2 * 0.4) + (v3 * 0.2)
+        elif prop == "短中期":
+            # 3日後、1週間後を重視
+            weighted_return = (v3 * 0.4) + (vw * 0.6)
+        else: # 中長期
+            # 1週間後を最重視
+            weighted_return = (v3 * 0.2) + (vw * 0.8)
+            
+        base = max(0, weighted_return)
+        score = min(100, int(base * 15 + 40)) if base > 0 else 0
+        if score > 0 and base > 0.5:
+             score = min(100, int(50 + base * 10))
+             
+    # 少なすぎるサンプル（点灯回数1回などで極端な値になること）へのペナルティ
+    if stats.get('点灯回数', 0) <= 2:
+        score = int(score * 0.7)
+
+    return score
+
+
 # --- メイン解析処理 ---
 @st.cache_data(ttl=86400, show_spinner=False)
 def analyze_all_stocks():
@@ -396,10 +497,11 @@ def analyze_all_stocks():
             df['Ret_Buy_15'] = (df['Close'].shift(-15) - df['Close']) / df['Close'] * 100
             df['Ret_Buy_20'] = (df['Close'].shift(-20) - df['Close']) / df['Close'] * 100
             
-            # 売りリターン計算 (1, 2, 3営業日後)
+            # 売りリターン計算 (1, 2, 3, 5営業日後)
             df['Ret_Sell_1'] = (df['Close'].shift(-1) - df['Close']) / df['Close'] * 100
             df['Ret_Sell_2'] = (df['Close'].shift(-2) - df['Close']) / df['Close'] * 100
             df['Ret_Sell_3'] = (df['Close'].shift(-3) - df['Close']) / df['Close'] * 100
+            df['Ret_Sell_5'] = (df['Close'].shift(-5) - df['Close']) / df['Close'] * 100
             
             df_half = df.tail(150) # 過去半年分（約150営業日）を抽出
             
@@ -414,19 +516,26 @@ def analyze_all_stocks():
             }
             
             buy_stats = []
+            buy_scores = {}
             for s_name, col_name in buy_cols.items():
                 if col_name in df_half.columns:
                     rows = df_half[df_half[col_name] == True]
                     cnt = len(rows)
                     if cnt > 0:
-                        buy_stats.append({
+                        stat_dict = {
                             "シグナル": s_name,
                             "点灯回数": cnt,
                             "1週間後": rows['Ret_Buy_5'].mean(),
                             "2週間後": rows['Ret_Buy_10'].mean(),
                             "3週間後": rows['Ret_Buy_15'].mean(),
                             "4週間後": rows['Ret_Buy_20'].mean()
-                        })
+                        }
+                        # スコア計算
+                        score = calculate_signal_score(s_name, stat_dict, is_buy=True)
+                        stat_dict["精度スコア"] = score
+                        buy_scores[s_name] = score
+                        
+                        buy_stats.append(stat_dict)
                         
             sell_cols = {
                 "グランビルの法則(売り①: 売り転換)": "Sig_Granville_Sell_1",
@@ -439,18 +548,43 @@ def analyze_all_stocks():
             }
             
             sell_stats = []
+            sell_scores = {}
             for s_name, col_name in sell_cols.items():
                 if col_name in df_half.columns:
                     rows = df_half[df_half[col_name] == True]
                     cnt = len(rows)
                     if cnt > 0:
-                        sell_stats.append({
+                        stat_dict = {
                             "シグナル": s_name,
                             "点灯回数": cnt,
                             "1日後": rows['Ret_Sell_1'].mean(),
                             "2日後": rows['Ret_Sell_2'].mean(),
-                            "3日後": rows['Ret_Sell_3'].mean()
-                        })
+                            "3日後": rows['Ret_Sell_3'].mean(),
+                            "1週間後": rows['Ret_Sell_5'].mean()
+                        }
+                        # スコア計算
+                        score = calculate_signal_score(s_name, stat_dict, is_buy=False)
+                        stat_dict["精度スコア"] = score
+                        sell_scores[s_name] = score
+                        
+                        sell_stats.append(stat_dict)
+            
+            # 精度スコア列を整える（表示順序用）
+            if buy_stats:
+                # 精度スコア列を2番目に移動
+                for i in range(len(buy_stats)):
+                     score_val = buy_stats[i].pop("精度スコア")
+                     new_dict = {"シグナル": buy_stats[i]["シグナル"], "精度スコア": score_val}
+                     new_dict.update(buy_stats[i])
+                     buy_stats[i] = new_dict
+
+            if sell_stats:
+                for i in range(len(sell_stats)):
+                     score_val = sell_stats[i].pop("精度スコア")
+                     new_dict = {"シグナル": sell_stats[i]["シグナル"], "精度スコア": score_val}
+                     new_dict.update(sell_stats[i])
+                     sell_stats[i] = new_dict
+
             
             # --- 直近1週間（過去5営業日）の株価データを取得 ---
             recent_ohlc = df.tail(5)[['Open', 'High', 'Low', 'Close']].copy()
@@ -487,7 +621,9 @@ def analyze_all_stocks():
                     "一目均衡表(三役逆転)": {"active": ichimoku_down, "date": ichimoku_date}
                 },
                 "buy_stats": buy_stats,
+                "buy_scores": buy_scores,
                 "sell_stats": sell_stats,
+                "sell_scores": sell_scores,
                 "chart_data": df.tail(150).copy() # チャート描画用に直近約半年分のデータを保存
             })
             
@@ -498,6 +634,13 @@ def analyze_all_stocks():
         
     progress_bar.empty()
     return results
+
+def format_score(val):
+    if pd.isna(val):
+         return "-"
+    color = "green" if val >= 70 else "black" if val >= 40 else "red"
+    return f'<span style="color: {color}; font-weight: bold;">{int(val)}点</span>'
+
 
 # --- 画面描画 ---
 col1, col2 = st.columns([3, 1])
@@ -554,7 +697,12 @@ if 'results' in st.session_state:
                 for sig_name, sig_data in res['signals_buy'].items():
                     if sig_data['active']:
                         date_str = f" [{sig_data['date']}]" if sig_data['date'] else ""
-                        st.markdown(f"- ✅ **{sig_name}** 点灯 {date_str}")
+                        
+                        # スコアの取得と表示
+                        score = res['buy_scores'].get(sig_name)
+                        score_str = f" <span style='font-size: 0.8em;'>(精度: {int(score)}点)</span>" if score is not None else ""
+                        
+                        st.markdown(f"- ✅ **{sig_name}** 点灯 {date_str}{score_str}", unsafe_allow_html=True)
                         buy_count += 1
                 if buy_count == 0:
                     st.write("現在、点灯している買いシグナルはありません。")
@@ -565,42 +713,51 @@ if 'results' in st.session_state:
                 for sig_name, sig_data in res['signals_sell'].items():
                     if sig_data['active']:
                         date_str = f" [{sig_data['date']}]" if sig_data['date'] else ""
-                        st.markdown(f"- ⚠️ **{sig_name}** 点灯 {date_str}")
+                        
+                        score = res['sell_scores'].get(sig_name)
+                        score_str = f" <span style='font-size: 0.8em;'>(精度: {int(score)}点)</span>" if score is not None else ""
+                        
+                        st.markdown(f"- ⚠️ **{sig_name}** 点灯 {date_str}{score_str}", unsafe_allow_html=True)
                         sell_count += 1
                 if sell_count == 0:
                     st.write("現在、点灯している売りシグナルはありません。")
 
             # --- バックテスト結果の表示セクション ---
-            with st.expander("📈 過去半年間のシグナル実績（平均変動割合）"):
-                st.write("過去半年間に各シグナルが点灯した際、その後の終値が平均で何％変動したかを表示します。（＋なら上昇、－なら下落）")
-                
-                # 直近でシグナルが出たばかりで未来のデータがない場合は「-」で表示
+            with st.expander("📈 過去半年間のシグナル実績（平均変動割合）と精度スコア"):
+                st.markdown("""
+                過去半年間に各シグナルが点灯した際、その後の終値が平均で何％変動したかを表示します。（＋なら上昇、－なら下落）  
+                **【精度スコアについて(100点満点)】**  
+                シグナルの性質（ダウ理論なら短期、MACDなら中長期など）に合わせて重視する期間の変動率を加重平均し、その銘柄においてどの程度「期待通りに機能しているか」を独自に点数化したものです。（70点以上は高精度）
+                """)
                 
                 st.markdown("##### 🔵 買いシグナルの実績 (1〜4週間後)")
                 if res.get('buy_stats'):
                     df_buy_stats = pd.DataFrame(res['buy_stats'])
                     st.dataframe(
                         df_buy_stats.style.format({
+                            "精度スコア": "{:.0f}",
                             "1週間後": "{:+.2f}%", 
                             "2週間後": "{:+.2f}%", 
                             "3週間後": "{:+.2f}%", 
                             "4週間後": "{:+.2f}%"
-                        }, na_rep="-"),
+                        }, na_rep="-").background_gradient(subset=['精度スコア'], cmap='Greens', vmin=0, vmax=100),
                         hide_index=True,
                         use_container_width=True
                     )
                 else:
                     st.write("過去半年に点灯した買いシグナルはありません。")
                     
-                st.markdown("##### 🔴 売りシグナルの実績 (1〜3日後)")
+                st.markdown("##### 🔴 売りシグナルの実績 (1〜3日後・1週間後)")
                 if res.get('sell_stats'):
                     df_sell_stats = pd.DataFrame(res['sell_stats'])
                     st.dataframe(
                         df_sell_stats.style.format({
+                            "精度スコア": "{:.0f}",
                             "1日後": "{:+.2f}%", 
                             "2日後": "{:+.2f}%", 
-                            "3日後": "{:+.2f}%"
-                        }, na_rep="-"),
+                            "3日後": "{:+.2f}%",
+                            "1週間後": "{:+.2f}%"
+                        }, na_rep="-").background_gradient(subset=['精度スコア'], cmap='Reds', vmin=0, vmax=100),
                         hide_index=True,
                         use_container_width=True
                     )
@@ -674,6 +831,7 @@ if 'results' in st.session_state:
                         dow_sell_y.append(row['High'] * 1.10) # 通常シグナルと被らないようさらに上に配置
                         dow_sell_text.append(f"<b>【ダウ理論 売り】 {d}</b><br>下落トレンド転換(高値・安値切り下げ)")
                         
+                # 買いシグナル (水色に変更)
                 if buy_x:
                     fig.add_trace(go.Scatter(
                         x=buy_x, y=buy_y, mode='markers',
@@ -681,6 +839,7 @@ if 'results' in st.session_state:
                         name='買いシグナル(各指標)', hovertext=buy_text, hoverinfo='text'
                     ), row=1, col=1)
                         
+                # 売りシグナル (ピンク色に変更)
                 if sell_x:
                     fig.add_trace(go.Scatter(
                         x=sell_x, y=sell_y, mode='markers',
@@ -702,13 +861,20 @@ if 'results' in st.session_state:
                         name='ダウ理論 売り転換', hovertext=dow_sell_text, hoverinfo='text'
                     ), row=1, col=1)
                 
-                # レイアウト調整
+                # レイアウト調整 (凡例を左上に移動)
                 fig.update_layout(
                     height=500, 
                     margin=dict(l=0, r=0, t=30, b=0), 
                     xaxis_rangeslider_visible=False, # ローソク足標準のレンジスライダーを非表示
                     showlegend=True,
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0)
+                    legend=dict(
+                        orientation="h", 
+                        yanchor="top", 
+                        y=1.02, 
+                        xanchor="left", 
+                        x=0,
+                        bgcolor="rgba(255, 255, 255, 0.5)" # 凡例の背景を少し透過
+                    )
                 )
                 
                 # 土日などの休場日の空白を詰める処理
