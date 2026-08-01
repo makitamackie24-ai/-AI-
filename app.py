@@ -207,10 +207,10 @@ def analyze_all_stocks():
                 current_trend = "ボックストレンド ➡️"
                 
             # --- Step2 & 3: テクニカルサイン判定 ---
-            # グランビルの法則 (直近3日間でクロスが発生しているか簡易判定)
+            # グランビルの法則 (直近1ヶ月間（20営業日）でクロスが発生しているか判定)
             granville_buy = False
             granville_sell = False
-            for j in range(1, 4):
+            for j in range(1, 21): # 検出期間を直近20日間に拡大
                 c0, c1 = get_val(df['Close'], -j), get_val(df['Close'], -(j+1))
                 s0, s1 = get_val(df['SMA_20'], -j), get_val(df['SMA_20'], -(j+1))
                 
