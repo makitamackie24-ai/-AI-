@@ -67,6 +67,47 @@ def add_technical_indicators(df):
     rs = up.ewm(com=13, adjust=False).mean() / down.ewm(com=13, adjust=False).mean()
     df['RSI'] = 100 - (100 / (1 + rs))
 
+    # GC / DC
+    df['Sig_GC'] = (df['SMA_5'] > df['SMA_20']) & (df['SMA_5'].shift(1) <= df['SMA_20'].shift(1))
+    df['Sig_DC'] = (df['SMA_5'] < df['SMA_20']) & (df['SMA_5'].shift(1) >= df['SMA_20'].shift(1))
+    
+    # MACD
+    df['Sig_MACD_Buy'] = (df['MACD'] > df['MACD_Signal']) & (df['MACD'].shift(1) <= df['MACD_Signal'].shift(1))
+    df['Sig_MACD_Sell'] = (df['MACD'] < df['MACD_Signal']) & (df['MACD'].shift(1) >= df['MACD_Signal'].shift(1))
+    
+    # グランビル
+    df['Sig_Granville_Buy'] = (df['SMA_20'] >= df['SMA_20'].shift(1)) & (df['Close'] > df['SMA_20']) & (df['Close'].shift(1) <= df['SMA_20'].shift(1))
+    df['Sig_Granville_Sell'] = (df['SMA_20'] <= df['SMA_20'].shift(1)) & (df['Close'] < df['SMA_20']) & (df['Close'].shift(1) >= df['SMA_20'].shift(1))
+    
+    # 一目均衡表
+    cloud_top = df[['Senkou1', 'Senkou2']].max(axis=1)
+    cloud_bottom = df[['Senkou1', 'Senkou2']].min(axis=1)
+    ichimoku_buy = (df['Tenkan'] > df['Kijun']) & (df['Close'] > cloud_top) & (df['Close'] > df['Close'].shift(26))
+    df['Sig_Ichimoku_Buy'] = ichimoku_buy & ~ichimoku_buy.shift(1).fillna(False)
+    
+    ichimoku_sell = (df['Tenkan'] < df['Kijun']) & (df['Close'] < cloud_bottom) & (df['Close'] < df['Close'].shift(26))
+    df['Sig_Ichimoku_Sell'] = ichimoku_sell & ~ichimoku_sell.shift(1).fillna(False)
+    
+    # ダウ理論 (簡易ベクトル判定)
+    df['Local_Max'] = df['High'][(df['High'] == df['High'].rolling(5, center=True).max())]
+    df['Local_Min'] = df['Low'][(df['Low'] == df['Low'].rolling(5, center=True).min())]
+    df['Last_Max'] = df['Local_Max'].ffill()
+    df['Last_Min'] = df['Local_Min'].ffill()
+    
+    max_s = df['Local_Max'].dropna()
+    min_s = df['Local_Min'].dropna()
+    df['Prev_Max'] = np.nan
+    df['Prev_Min'] = np.nan
+    if len(max_s) >= 2: df.loc[max_s.index, 'Prev_Max'] = max_s.shift(1)
+    if len(min_s) >= 2: df.loc[min_s.index, 'Prev_Min'] = min_s.shift(1)
+    df['Prev_Max'] = df['Prev_Max'].ffill()
+    df['Prev_Min'] = df['Prev_Min'].ffill()
+    
+    dow_up_cond = (df['Last_Max'] > df['Prev_Max']) & (df['Last_Min'] > df['Prev_Min'])
+    dow_dn_cond = (df['Last_Max'] < df['Prev_Max']) & (df['Last_Min'] < df['Prev_Min'])
+    df['Sig_Dow_Buy'] = dow_up_cond & (df['Local_Max'].notna() | df['Local_Min'].notna()) & ~dow_up_cond.shift(1).fillna(False)
+    df['Sig_Dow_Sell'] = dow_dn_cond & (df['Local_Max'].notna() | df['Local_Min'].notna()) & ~dow_dn_cond.shift(1).fillna(False)
+
     return df
 
 # --- ダウ理論判定 ---
@@ -372,53 +413,59 @@ if 'results' in st.session_state:
                 
                 df_c_dates = df_c.index.strftime('%Y-%m-%d').tolist()
                 
-                # 買いシグナルを日付ごとに集計
                 buy_signals = {}
-                for sig_name, sig_data in res['signals_buy'].items():
-                    if sig_data['active'] and sig_data['date']:
-                        d = sig_data['date']
-                        if d not in buy_signals:
-                            buy_signals[d] = []
-                        buy_signals[d].append(sig_name)
+                for idx, row in df_c.iterrows():
+                    d = idx.strftime('%Y-%m-%d')
+                    sigs = []
+                    if row.get('Sig_GC'): sigs.append("ゴールデンクロス(5日/20日)")
+                    if row.get('Sig_MACD_Buy'): sigs.append("MACD上抜け")
+                    if row.get('Sig_Granville_Buy'): sigs.append("グランビルの法則(買い)")
+                    if row.get('Sig_Ichimoku_Buy'): sigs.append("一目均衡表(三役好転)")
+                    if row.get('Sig_Dow_Buy'): sigs.append("ダウ理論(上昇波)")
+                    if sigs:
+                        buy_signals[d] = sigs
                         
                 buy_x, buy_y, buy_text = [], [], []
                 for d, sigs in buy_signals.items():
                     if d in df_c_dates:
                         idx = df_c_dates.index(d)
                         buy_x.append(df_c.index[idx])
-                        # ローソク足の安値の少し下（0.98倍）の位置にマーカーを配置
-                        buy_y.append(df_c['Low'].iloc[idx] * 0.98)
-                        buy_text.append("<b>【買いシグナル】</b><br>" + "<br>".join(sigs))
+                        # ローソク足の安値の少し下（0.96倍）の位置にマーカーを配置
+                        buy_y.append(df_c['Low'].iloc[idx] * 0.96)
+                        buy_text.append(f"<b>【買いシグナル】 {d}</b><br>" + "<br>".join(sigs))
                         
                 if buy_x:
                     fig.add_trace(go.Scatter(
                         x=buy_x, y=buy_y, mode='markers',
-                        marker=dict(symbol='triangle-up', size=14, color='#E91E63', line=dict(width=1, color='white')),
+                        marker=dict(symbol='triangle-up', size=12, color='#E91E63', line=dict(width=1, color='white')),
                         name='買いシグナル点灯', hovertext=buy_text, hoverinfo='text'
                     ), row=1, col=1)
 
-                # 売りシグナルを日付ごとに集計
                 sell_signals = {}
-                for sig_name, sig_data in res['signals_sell'].items():
-                    if sig_data['active'] and sig_data['date']:
-                        d = sig_data['date']
-                        if d not in sell_signals:
-                            sell_signals[d] = []
-                        sell_signals[d].append(sig_name)
+                for idx, row in df_c.iterrows():
+                    d = idx.strftime('%Y-%m-%d')
+                    sigs = []
+                    if row.get('Sig_DC'): sigs.append("デッドクロス(5日/20日)")
+                    if row.get('Sig_MACD_Sell'): sigs.append("MACD下抜け")
+                    if row.get('Sig_Granville_Sell'): sigs.append("グランビルの法則(売り)")
+                    if row.get('Sig_Ichimoku_Sell'): sigs.append("一目均衡表(三役逆転)")
+                    if row.get('Sig_Dow_Sell'): sigs.append("ダウ理論(下落波)")
+                    if sigs:
+                        sell_signals[d] = sigs
                         
                 sell_x, sell_y, sell_text = [], [], []
                 for d, sigs in sell_signals.items():
                     if d in df_c_dates:
                         idx = df_c_dates.index(d)
                         sell_x.append(df_c.index[idx])
-                        # ローソク足の高値の少し上（1.02倍）の位置にマーカーを配置
-                        sell_y.append(df_c['High'].iloc[idx] * 1.02)
-                        sell_text.append("<b>【売りシグナル】</b><br>" + "<br>".join(sigs))
+                        # ローソク足の高値の少し上（1.04倍）の位置にマーカーを配置
+                        sell_y.append(df_c['High'].iloc[idx] * 1.04)
+                        sell_text.append(f"<b>【売りシグナル】 {d}</b><br>" + "<br>".join(sigs))
                         
                 if sell_x:
                     fig.add_trace(go.Scatter(
                         x=sell_x, y=sell_y, mode='markers',
-                        marker=dict(symbol='triangle-down', size=14, color='#00BCD4', line=dict(width=1, color='white')),
+                        marker=dict(symbol='triangle-down', size=12, color='#00BCD4', line=dict(width=1, color='white')),
                         name='売りシグナル点灯', hovertext=sell_text, hoverinfo='text'
                     ), row=1, col=1)
                 
