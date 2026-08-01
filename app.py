@@ -624,7 +624,7 @@ def analyze_all_stocks():
                 "buy_scores": buy_scores,
                 "sell_stats": sell_stats,
                 "sell_scores": sell_scores,
-                "chart_data": df.tail(150).copy() # チャート描画用に直近約半年分のデータを保存
+                "chart_data": df.copy() # チャート描画用に過去3年分（全期間）のデータを保存
             })
             
         except Exception as e:
@@ -773,7 +773,7 @@ if 'results' in st.session_state:
                     st.write("過去半年に点灯した売りシグナルはありません。")
 
             # --- チャート表示セクション ---
-            with st.expander("📊 ローソク足チャートを表示 (直近約半年分)"):
+            with st.expander("📊 ローソク足チャートを表示 (過去3年分)"):
                 df_c = res['chart_data']
                 
                 # 2行1列のサブプロット作成 (上: ローソク足, 下: 出来高)
