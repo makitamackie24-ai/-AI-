@@ -2,621 +2,596 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
 from sklearn.ensemble import RandomForestClassifier
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import warnings
-warnings.filterwarnings('ignore')
 
-st.set_page_config(page_title="多角的シグナル検知AI", layout="wide")
+# ページ設定
+st.set_page_config(page_title="多角的シグナル検知 AI株価予測ツール", layout="wide")
+
+def main():
+    st.title("📈 多角的シグナル検知 AI株価予測ツール (完全版)")
+    st.write("移動平均線、一目均衡表、グランビル、ダウ理論、ローソク足パターン等を組み合わせた多角的シグナル検知＆AI予測")
+
+    # 指定された10銘柄
+    tickers = {
+        "NTT(株)": "9432.T",
+        "ソフトバンク(株)": "9434.T",
+        "日本製鉄(株)": "5401.T",
+        "東京電力ホールディングス(株)": "9501.T",
+        "日産自動車(株)": "7201.T",
+        "(株)サンリオ": "8136.T",
+        "ホンダ": "7267.T",
+        "伊藤忠商事(株)": "8001.T",
+        "楽天グループ(株)": "4755.T",
+        "野村ホールディングス(株)": "8604.T"
+    }
+
+    selected_names = st.sidebar.multiselect("対象銘柄を選択", list(tickers.keys()), default=list(tickers.keys()))
+
+    if st.sidebar.button("総合診断を実行", type="primary"):
+        if not selected_names:
+            st.warning("銘柄を選択してください。")
+            return
+
+        progress_text = "データを取得・解析中..."
+        my_bar = st.progress(0, text=progress_text)
+        
+        for i, name in enumerate(selected_names):
+            ticker_symbol = tickers[name]
+            
+            # 進行状況の更新
+            progress = (i) / len(selected_names)
+            my_bar.progress(progress, text=f"解析中: {name} ({i+1}/{len(selected_names)})")
+            
+            st.markdown(f"## {name} ({ticker_symbol})")
+            
+            # データ取得と解析の実行
+            analyze_and_display(ticker_symbol)
+            
+            st.markdown("---")
+            
+        my_bar.progress(1.0, text="解析完了！")
+
+@st.cache_data(ttl=3600)
+def fetch_data(ticker):
+    """過去3年分のデータを取得"""
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365 * 3) # 3年分
+    df = yf.download(ticker, start=start_date, end=end_date)
+    
+    if df.empty:
+        return df
+        
+    # MultiIndexの解除と1次元化（エラー対策）
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    
+    # 必要な列を数値型に変換
+    for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+    df = df.dropna(subset=['Close'])
+    return df
 
 def calculate_signals(df):
-    """各種テクニカル指標とシグナルを計算する関数"""
+    """各種テクニカル指標と売買シグナルを計算"""
     df = df.copy()
     
-    # yfinanceのバージョンや取得状況によって列がMultiIndexになる場合の対策
-    if isinstance(df.columns, pd.MultiIndex):
-        # 必要な列だけを抽出し、フラットなSeriesにする
-        open_col = df['Open'].iloc[:, 0] if isinstance(df['Open'], pd.DataFrame) else df['Open']
-        high_col = df['High'].iloc[:, 0] if isinstance(df['High'], pd.DataFrame) else df['High']
-        low_col = df['Low'].iloc[:, 0] if isinstance(df['Low'], pd.DataFrame) else df['Low']
-        close_col = df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close']
-        
-        # 新しいDataFrameとして再構築
-        df = pd.DataFrame({
-            'Open': open_col,
-            'High': high_col,
-            'Low': low_col,
-            'Close': close_col
-        })
-    else:
-        # 万が一DataFrameになっている列があればSeriesにする
-        for col in ['Open', 'High', 'Low', 'Close']:
-            if isinstance(df[col], pd.DataFrame):
-                df[col] = df[col].iloc[:, 0]
-
-    # 数値型に明示的に変換（エラー防止）
-    df['Close'] = pd.to_numeric(df['Close'])
-    df['Open'] = pd.to_numeric(df['Open'])
-    df['High'] = pd.to_numeric(df['High'])
-    df['Low'] = pd.to_numeric(df['Low'])
-    
+    # 移動平均線
     df['SMA_5'] = df['Close'].rolling(window=5).mean()
     df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    df['SMA_60'] = df['Close'].rolling(window=60).mean() # パーフェクトオーダー用
+    df['SMA_60'] = df['Close'].rolling(window=60).mean()
     
-    # --- MACD ---
-    ema_12 = df['Close'].ewm(span=12, adjust=False).mean()
-    ema_26 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = ema_12 - ema_26
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    # MACD
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
-    # --- RSI ---
+    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # --- 一目均衡表 ---
-    df['Tenkan'] = (df['High'].rolling(window=9).max() + df['Low'].rolling(window=9).min()) / 2
-    df['Kijun'] = (df['High'].rolling(window=26).max() + df['Low'].rolling(window=26).min()) / 2
-    df['Senkou_A'] = ((df['Tenkan'] + df['Kijun']) / 2).shift(26)
-    df['Senkou_B'] = ((df['High'].rolling(window=52).max() + df['Low'].rolling(window=52).min()) / 2).shift(26)
-    df['Chikou'] = df['Close'].shift(-26)
-    
-    # --- グランビルの法則 (5日線と20日線の関係) ---
-    sma20_diff = df['SMA_20'].diff()
-    sma20_is_up = sma20_diff > 0
-    sma20_is_down = sma20_diff < 0
-    sma20_is_flat = sma20_diff.abs() < (df['SMA_20'] * 0.001) # 0.1%未満の変動を横ばいとする
-    
-    cross_up = (df['SMA_5'] > df['SMA_20']) & (df['SMA_5'].shift(1) <= df['SMA_20'].shift(1))
-    cross_down = (df['SMA_5'] < df['SMA_20']) & (df['SMA_5'].shift(1) >= df['SMA_20'].shift(1))
-    
-    # 買い① (転換): 20日線が下落or横ばい後、5日線が下から上へ
-    df['Sig_Granville_Buy_1'] = cross_up & (sma20_is_down | sma20_is_flat).shift(1)
-    
-    # 買い② (押し目買い): 20日線上向き、5日線が20日線を割り、再度上抜け
-    # (ここでは簡易的に、20日線上向きでのクロスアップとする)
-    df['Sig_Granville_Buy_2'] = cross_up & sma20_is_up.shift(1)
-    
-    # 買い③ (買い乗せ): 20日線上向き、5日線が下落するも20日線を割らずに再上昇
-    sma5_diff = df['SMA_5'].diff()
-    df['Sig_Granville_Buy_3'] = sma20_is_up & (df['SMA_5'] > df['SMA_20']) & (sma5_diff > 0) & (sma5_diff.shift(1) < 0)
-    
-    # 売り① (転換): 20日線が上昇or横ばい後、5日線が上から下へ
-    df['Sig_Granville_Sell_1'] = cross_down & (sma20_is_up | sma20_is_flat).shift(1)
-    
-    # 売り② (戻り売り): 20日線下向き、5日線が20日線を上回り、再度下抜け
-    df['Sig_Granville_Sell_2'] = cross_down & sma20_is_down.shift(1)
-    
-    # 売り③ (売り乗せ): 20日線下向き、5日線が上昇するも20日線を超えずに再下落
-    df['Sig_Granville_Sell_3'] = sma20_is_down & (df['SMA_5'] < df['SMA_20']) & (sma5_diff < 0) & (sma5_diff.shift(1) > 0)
 
-    # --- 基本のクロス ---
-    df['Sig_GC'] = cross_up # 買い②と被るが汎用シグナルとして保持
-    df['Sig_DC'] = cross_down
-    
-    macd_cross_up = (df['MACD'] > df['MACD_Signal']) & (df['MACD'].shift(1) <= df['MACD_Signal'].shift(1))
-    macd_cross_down = (df['MACD'] < df['MACD_Signal']) & (df['MACD'].shift(1) >= df['MACD_Signal'].shift(1))
-    df['Sig_MACD_Buy'] = macd_cross_up
-    df['Sig_MACD_Sell'] = macd_cross_down
+    # 一目均衡表
+    high_9 = df['High'].rolling(window=9).max()
+    low_9 = df['Low'].rolling(window=9).min()
+    df['Tenkan'] = (high_9 + low_9) / 2
 
-    # --- パーフェクトオーダー (買い) ---
-    po_condition = (df['SMA_5'] > df['SMA_20']) & (df['SMA_20'] > df['SMA_60'])
-    # 新規に完成したタイミングのみをシグナルとする
-    df['Sig_PO_Buy'] = po_condition & ~po_condition.shift(1).fillna(False)
+    high_26 = df['High'].rolling(window=26).max()
+    low_26 = df['Low'].rolling(window=26).min()
+    df['Kijun'] = (high_26 + low_26) / 2
 
-    # --- 新高値ブレイクアウト (過去半年=125日) ---
-    half_year_high = df['High'].shift(1).rolling(window=125).max()
-    is_breakout = df['Close'] > half_year_high
-    df['Sig_Breakout_Buy'] = is_breakout & ~is_breakout.shift(1).fillna(False)
+    df['Senkou_Span_A'] = ((df['Tenkan'] + df['Kijun']) / 2).shift(26)
+    
+    high_52 = df['High'].rolling(window=52).max()
+    low_52 = df['Low'].rolling(window=52).min()
+    df['Senkou_Span_B'] = ((high_52 + low_52) / 2).shift(26)
+    
+    df['Chikou_Span'] = df['Close'].shift(-26)
 
-    # --- ローソク足パターン (売り) ---
-    prev_open, prev_close = df['Open'].shift(1), df['Close'].shift(1)
-    curr_open, curr_close = df['Open'], df['Close']
-    is_prev_bull = prev_close > prev_open # 前日が陽線
-    is_curr_bear = curr_close < curr_open # 当日が陰線
-    high_zone = df['Close'] > df['SMA_20'] # 高値圏
+    # 過去半年（約125日）の高値・安値
+    df['High_125'] = df['High'].rolling(window=125).max().shift(1)
     
-    # 包み足(陰線)
-    df['Sig_Engulfing_Sell'] = is_prev_bull & is_curr_bear & (curr_open > prev_close) & (curr_close < prev_open) & high_zone
-    # 否定陰線
-    df['Sig_Negation_Sell'] = is_prev_bull & is_curr_bear & (curr_open <= prev_close) & (curr_close < prev_open) & high_zone
+    # --- シグナル判定用フラグ初期化 ---
+    df['Buy_Signals'] = [[] for _ in range(len(df))]
+    df['Sell_Signals'] = [[] for _ in range(len(df))]
 
-    # --- 一目均衡表 (厳密な三役好転/逆転) ---
-    # 転換線・基準線
-    ichimoku_cross_up = df['Tenkan'] > df['Kijun']
-    ichimoku_cross_down = df['Tenkan'] < df['Kijun']
-    # 雲抜け
-    cloud_top = df[['Senkou_A', 'Senkou_B']].max(axis=1)
-    cloud_bottom = df[['Senkou_A', 'Senkou_B']].min(axis=1)
-    above_cloud = df['Close'] > cloud_top
-    below_cloud = df['Close'] < cloud_bottom
-    
-    # 遅行スパン (26日前のローソク足の高値・安値と比較)
-    past_high = df['High'].shift(26)
-    past_low = df['Low'].shift(26)
-    # 現在の株価(Close)が、26日前の株価と比較してどうか（遅行スパンの現在位置での評価）
-    # ※ 本来の遅行スパンは過去にプロットしますが、判定は「現在」行います
-    chikou_up = df['Close'] > past_high
-    chikou_down = df['Close'] < past_low
-
-    # 3条件が揃っている状態
-    sanyaku_koten_state = ichimoku_cross_up & above_cloud & chikou_up
-    sanyaku_gyakuten_state = ichimoku_cross_down & below_cloud & chikou_down
-    
-    # 今日新しく揃った瞬間だけをシグナル化
-    df['Sig_Ichimoku_Buy'] = sanyaku_koten_state & ~sanyaku_koten_state.shift(1).fillna(False)
-    df['Sig_Ichimoku_Sell'] = sanyaku_gyakuten_state & ~sanyaku_gyakuten_state.shift(1).fillna(False)
-
-    # --- ダウ理論判定 (簡易ジグザグ) ---
-    df['Swing_High'] = df['High'][(df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(-1))]
-    df['Swing_Low'] = df['Low'][(df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(-1))]
-    
-    df['Sig_Dow_Buy'] = False
-    df['Sig_Dow_Sell'] = False
-    
-    last_high = last_low = None
-    prev_high = prev_low = None
+    # 高値圏・安値圏の判定 (エラー回避のため numpy を使用)
+    high_zone = df['Close'].values > df['SMA_20'].values
     
     for i in range(1, len(df)):
-        if pd.notna(df['Swing_High'].iloc[i]):
-            prev_high = last_high
-            last_high = df['Swing_High'].iloc[i]
-        if pd.notna(df['Swing_Low'].iloc[i]):
-            prev_low = last_low
-            last_low = df['Swing_Low'].iloc[i]
+        current_date = df.index[i]
+        
+        # --- 買いシグナル ---
+        # 1. ゴールデンクロス (5日線が20日線を下から上へ抜ける)
+        if df['SMA_5'].iloc[i-1] <= df['SMA_20'].iloc[i-1] and df['SMA_5'].iloc[i] > df['SMA_20'].iloc[i]:
+            df['Buy_Signals'].iloc[i].append("ゴールデンクロス(5日/20日)")
             
-        # 高値切り上げ ＆ 安値切り上げ
-        if prev_high and prev_low and last_high and last_low:
-            if last_high > prev_high and last_low > prev_low:
-                df['Sig_Dow_Buy'].iloc[i] = True
-            # 高値切り下げ ＆ 安値切り下げ
-            elif last_high < prev_high and last_low < prev_low:
-                df['Sig_Dow_Sell'].iloc[i] = True
+        # 2. MACD上抜け
+        if df['MACD'].iloc[i-1] <= df['Signal'].iloc[i-1] and df['MACD'].iloc[i] > df['Signal'].iloc[i]:
+             df['Buy_Signals'].iloc[i].append("MACD上抜け")
+             
+        # 3. グランビルの法則 (簡易版)
+        sma20_trend_up = df['SMA_20'].iloc[i] > df['SMA_20'].iloc[i-5]
+        sma20_trend_down = df['SMA_20'].iloc[i] < df['SMA_20'].iloc[i-5]
+        
+        # 買い①：買い転換（移動平均線が下落から横ばい・上昇に転じ、株価が上抜く）
+        if sma20_trend_up and df['Close'].iloc[i-1] < df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] > df['SMA_20'].iloc[i]:
+            df['Buy_Signals'].iloc[i].append("グランビルの法則(買い①: 買い転換)")
+            
+        # 買い②：押し目買い（上昇中の移動平均線を株価が一時的に下回り、再上昇）
+        if sma20_trend_up and df['Close'].iloc[i-1] < df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] > df['SMA_20'].iloc[i] and df['Close'].iloc[i-5] > df['SMA_20'].iloc[i-5]:
+            df['Buy_Signals'].iloc[i].append("グランビルの法則(買い②: 押し目買い)")
+            
+        # 買い③：買い乗せ（上昇中の移動平均線の上で、株価が移動平均線に近づいてから再上昇）
+        if sma20_trend_up and df['Close'].iloc[i] > df['SMA_20'].iloc[i] and df['Low'].iloc[i-1] <= df['SMA_20'].iloc[i-1] * 1.01 and df['Close'].iloc[i] > df['Close'].iloc[i-1]:
+            df['Buy_Signals'].iloc[i].append("グランビルの法則(買い③: 買い乗せ)")
+
+        # 4. 一目均衡表 三役好転
+        if i >= 26:
+            tenkan_cross = df['Tenkan'].iloc[i-1] <= df['Kijun'].iloc[i-1] and df['Tenkan'].iloc[i] > df['Kijun'].iloc[i]
+            price_above_cloud = df['Close'].iloc[i] > max(df['Senkou_Span_A'].iloc[i], df['Senkou_Span_B'].iloc[i])
+            chikou_above_price = df['Close'].iloc[i] > df['Close'].iloc[i-26] # 遅行スパンの現在値(今日の終値)が26日前の終値を上回る
+            if tenkan_cross and price_above_cloud and chikou_above_price:
+                df['Buy_Signals'].iloc[i].append("一目均衡表(三役好転)")
+
+        # 5. ダウ理論 上昇波 (直近高値更新かつ安値切り上げ)
+        if df['Close'].iloc[i] > df['Close'].iloc[i-1] and df['Low'].iloc[i] > df['Low'].iloc[i-1] and df['High'].iloc[i] > df['High'].iloc[i-1]:
+            # 少し厳しめの条件にする（連続上昇）
+            if df['Close'].iloc[i-1] > df['Close'].iloc[i-2] and df['Low'].iloc[i-1] > df['Low'].iloc[i-2]:
+                 df['Buy_Signals'].iloc[i].append("ダウ理論(上昇波)")
+                 
+        # 6. パーフェクトオーダー (買い)
+        if df['SMA_5'].iloc[i-1] <= df['SMA_20'].iloc[i-1] or df['SMA_20'].iloc[i-1] <= df['SMA_60'].iloc[i-1]:
+            # 前日は完成していなかったが、今日完成した
+            if df['SMA_5'].iloc[i] > df['SMA_20'].iloc[i] > df['SMA_60'].iloc[i] and df['SMA_60'].iloc[i] > df['SMA_60'].iloc[i-1]:
+                 df['Buy_Signals'].iloc[i].append("パーフェクトオーダー(買い)")
+                 
+        # 7. 新高値ブレイクアウト (過去半年の高値更新)
+        if pd.notna(df['High_125'].iloc[i]) and df['Close'].iloc[i] > df['High_125'].iloc[i] and df['Close'].iloc[i-1] <= df['High_125'].iloc[i-1]:
+             df['Buy_Signals'].iloc[i].append("過去半年の新高値ブレイクアウト")
+
+        # --- 売りシグナル ---
+        # 1. デッドクロス
+        if df['SMA_5'].iloc[i-1] >= df['SMA_20'].iloc[i-1] and df['SMA_5'].iloc[i] < df['SMA_20'].iloc[i]:
+            df['Sell_Signals'].iloc[i].append("デッドクロス(5日/20日)")
+            
+        # 2. MACD下抜け
+        if df['MACD'].iloc[i-1] >= df['Signal'].iloc[i-1] and df['MACD'].iloc[i] < df['Signal'].iloc[i]:
+             df['Sell_Signals'].iloc[i].append("MACD下抜け")
+             
+        # 3. グランビルの法則 (売り)
+        # 売り①：売り転換
+        if sma20_trend_down and df['Close'].iloc[i-1] > df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] < df['SMA_20'].iloc[i]:
+            df['Sell_Signals'].iloc[i].append("グランビルの法則(売り①: 売り転換)")
+        # 売り②：戻り売り
+        if sma20_trend_down and df['Close'].iloc[i-1] > df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] < df['SMA_20'].iloc[i] and df['Close'].iloc[i-5] < df['SMA_20'].iloc[i-5]:
+             df['Sell_Signals'].iloc[i].append("グランビルの法則(売り②: 戻り売り)")
+        # 売り③：売り乗せ
+        if sma20_trend_down and df['Close'].iloc[i] < df['SMA_20'].iloc[i] and df['High'].iloc[i-1] >= df['SMA_20'].iloc[i-1] * 0.99 and df['Close'].iloc[i] < df['Close'].iloc[i-1]:
+             df['Sell_Signals'].iloc[i].append("グランビルの法則(売り③: 売り乗せ)")
+
+        # 4. ダウ理論 下降波
+        if df['Close'].iloc[i] < df['Close'].iloc[i-1] and df['High'].iloc[i] < df['High'].iloc[i-1] and df['Low'].iloc[i] < df['Low'].iloc[i-1]:
+            if df['Close'].iloc[i-1] < df['Close'].iloc[i-2] and df['High'].iloc[i-1] < df['High'].iloc[i-2]:
+                df['Sell_Signals'].iloc[i].append("ダウ理論(下降波)")
                 
-    # 連続を省く
-    df['Sig_Dow_Buy'] = df['Sig_Dow_Buy'] & ~df['Sig_Dow_Buy'].shift(1).fillna(False)
-    df['Sig_Dow_Sell'] = df['Sig_Dow_Sell'] & ~df['Sig_Dow_Sell'].shift(1).fillna(False)
+        # 5. ローソク足パターン (高値圏でのみ有効)
+        if high_zone[i]:
+            # 包み足（陰線）
+            if df['Close'].iloc[i-1] > df['Open'].iloc[i-1]: # 前日陽線
+                if df['Open'].iloc[i] > df['Close'].iloc[i-1] and df['Close'].iloc[i] < df['Open'].iloc[i-1]:
+                    df['Sell_Signals'].iloc[i].append("ローソク足(包み足・陰線)")
+            
+            # 否定陰線
+            if df['Close'].iloc[i-1] > df['Open'].iloc[i-1]: # 前日陽線
+                if df['Open'].iloc[i] <= df['Close'].iloc[i-1] and df['Close'].iloc[i] < df['Open'].iloc[i-1]:
+                    # 重複を避ける
+                    if "ローソク足(包み足・陰線)" not in df['Sell_Signals'].iloc[i]:
+                        df['Sell_Signals'].iloc[i].append("ローソク足(否定陰線)")
 
     return df
 
-def train_predict_trend(df):
-    """
-    ランダムフォレストを用いて、1ヶ月後（20営業日後）のトレンドを予測
-    クラス: 1(上昇), 0(ボックス), -1(下落)
-    """
-    # 必要な特徴量だけを抽出し、それらにNaNが含まれる行のみを削除する
-    # (全体をdropnaすると、一目均衡表の遅行スパン等の影響で直近26日間のデータが全て消えてしまうため)
-    features = ['SMA_5', 'SMA_20', 'SMA_60', 'MACD', 'RSI', 'Close']
-    df_ml = df[features].copy()
-    df_ml = df_ml.dropna()
+def calculate_signal_performance(df):
+    """過去3年のシグナルごとの平均変動率とスコアを計算"""
+    buy_performance = {}
+    sell_performance = {}
     
-    if len(df_ml) < 100:
-        return None, None
-        
-    X = df_ml[features].copy()
+    current_date = df.index[-1]
     
-    # 目的変数（20日後のSMA20とCloseの関係でトレンドを定義）
-    future_sma20 = df_ml['SMA_20'].shift(-20)
-    future_close = df_ml['Close'].shift(-20)
-    
-    # 現在のSMA20に対する20日後のSMA20の変化率
-    sma20_change = (future_sma20 - df_ml['SMA_20']) / df_ml['SMA_20']
-    
-    conditions = [
-        (sma20_change > 0.02) & (future_close > future_sma20), # 明確な上昇
-        (sma20_change < -0.02) & (future_close < future_sma20) # 明確な下落
-    ]
-    choices = [1, -1]
-    # 条件に合わない場合はボックス(0)
-    y = np.select(conditions, choices, default=0)
-    
-    # 直近20日は正解データがないため学習から除外
-    X_train_full = X.iloc[:-20]
-    y_train_full = y[:-20]
-    
-    # 予測対象（最新のデータ）
-    X_latest = X.iloc[-1:]
-    
-    try:
-        model = RandomForestClassifier(n_estimators=200, random_state=42)
-        model.fit(X_train_full, y_train_full)
-        
-        # 予測確率を取得 [下落(-1), ボックス(0), 上昇(1)] の確率
-        # ※クラスが存在しない場合の対策
-        classes = model.classes_
-        proba = model.predict_proba(X_latest)[0]
-        
-        prob_dict = {-1: 0.0, 0: 0.0, 1: 0.0}
-        for cls, p in zip(classes, proba):
-            prob_dict[cls] = p
-            
-        return prob_dict, model
-    except Exception as e:
-        return None, None
-
-def calculate_signal_score(df, sig_name, is_buy):
-    """
-    バックテスト結果に基づき、直近を重視したシグナルの精度スコア(100点満点)を計算
-    """
-    # 該当シグナルがTrueのインデックスを取得
-    sig_idx = df.index[df[sig_name] == True]
-    if len(sig_idx) == 0:
-        return 0.0
-        
-    scores = []
-    weights = []
-    
-    # 最新日付からの経過日数でウェイトを減衰させる（直近を重視）
-    latest_date = df.index[-1]
-    
-    # シグナルの性質による評価期間のウェイト
-    if is_buy:
-        properties = {
-            "Sig_Granville_Buy_1": "中長期", "Sig_Granville_Buy_2": "中長期", "Sig_Granville_Buy_3": "短中期",
-            "Sig_GC": "中長期", "Sig_PO_Buy": "中長期", "Sig_Breakout_Buy": "中長期",
-            "Sig_MACD_Buy": "中長期", "Sig_Dow_Buy": "短期", "Sig_Ichimoku_Buy": "中長期"
-        }
-    else:
-        properties = {
-            "Sig_Granville_Sell_1": "中長期", "Sig_Granville_Sell_2": "中長期", "Sig_Granville_Sell_3": "短中期",
-            "Sig_DC": "中長期", "Sig_MACD_Sell": "中長期", "Sig_Dow_Sell": "短期", "Sig_Ichimoku_Sell": "中長期",
-            "Sig_Engulfing_Sell": "短期", "Sig_Negation_Sell": "短期"
-        }
-        
-    prop = properties.get(sig_name, "中長期")
-    
-    for idx in sig_idx:
-        try:
-            current_pos = df.index.get_loc(idx)
-            current_price = df['Close'].iloc[current_pos]
-            
-            # 時間減衰ウェイト (3年前=約1000営業日 でほぼ0に近づく)
-            days_diff = (latest_date - idx).days
-            time_weight = np.exp(-days_diff / 500) 
-            
-            if is_buy:
-                # 1w, 2w, 3w, 4w (5, 10, 15, 20営業日)
-                ret_1w = (df['Close'].iloc[current_pos+5] - current_price)/current_price if current_pos+5 < len(df) else 0
-                ret_2w = (df['Close'].iloc[current_pos+10] - current_price)/current_price if current_pos+10 < len(df) else 0
-                ret_3w = (df['Close'].iloc[current_pos+15] - current_price)/current_price if current_pos+15 < len(df) else 0
-                ret_4w = (df['Close'].iloc[current_pos+20] - current_price)/current_price if current_pos+20 < len(df) else 0
-                
-                if prop == "短期": val = ret_1w * 0.6 + ret_2w * 0.4
-                elif prop == "短中期": val = ret_2w * 0.5 + ret_3w * 0.5
-                else: val = ret_3w * 0.4 + ret_4w * 0.6
-                
-            else:
-                # 1d, 2d, 3d, 1w (1, 2, 3, 5営業日)
-                # 売りの場合は下がっていればプラス評価
-                ret_1d = -(df['Close'].iloc[current_pos+1] - current_price)/current_price if current_pos+1 < len(df) else 0
-                ret_2d = -(df['Close'].iloc[current_pos+2] - current_price)/current_price if current_pos+2 < len(df) else 0
-                ret_3d = -(df['Close'].iloc[current_pos+3] - current_price)/current_price if current_pos+3 < len(df) else 0
-                ret_1w = -(df['Close'].iloc[current_pos+5] - current_price)/current_price if current_pos+5 < len(df) else 0
-                
-                if prop == "短期": val = ret_1d * 0.3 + ret_2d * 0.3 + ret_3d * 0.4
-                elif prop == "短中期": val = ret_3d * 0.5 + ret_1w * 0.5
-                else: val = ret_1w * 1.0
-
-            scores.append(val)
-            weights.append(time_weight)
-        except Exception:
-            continue
-            
-    if not scores or sum(weights) == 0:
-        return 0.0
-        
-    # 加重平均
-    weighted_avg = np.average(scores, weights=weights)
-    
-    # スコア化 (0〜100点)
-    # 平均+5%の変動を100点とする
-    raw_score = (weighted_avg / 0.05) * 100
-    final_score = max(0, min(100, raw_score))
-    return final_score
-
-def main():
-    st.title("📊 多角的シグナル検知AIツール (3年分析版)")
-    st.markdown("直近のシグナル点灯状況、3年間の統計的実績、およびAIによるトレンド予測を統合した分析ダッシュボードです。")
-    
-    tickers = {
-        '日経平均 (日本)': '^N225',
-        'TOPIX (日本)': '^TOPX',
-        'マザーズ指数 (日本)': '^MOTHERS',
-        'S&P 500 (米国)': '^GSPC',
-        'NYダウ (米国)': '^DJI',
-        'NASDAQ (米国)': '^IXIC',
-        'トヨタ自動車': '7203.T',
-        '三菱UFJ': '8306.T',
-        '三井住友FG': '8316.T',
-        'ソフトバンクG': '9984.T',
-        'ソニーG': '6758.T',
-        'ファーストリテイリング': '9983.T',
-        'Apple': 'AAPL',
-        'Microsoft': 'MSFT',
-        'NVIDIA': 'NVDA',
-        'Tesla': 'TSLA',
-        'Bitcoin (BTC/USD)': 'BTC-USD',
-        'USD/JPY (ドル円)': 'JPY=X'
+    # シグナルの重み付け設定（どの期間を重視するか）
+    # (1d, 2d, 3d, 1w, 2w, 3w, 4w) のインデックス: 0, 1, 2, 3, 4, 5, 6
+    weights_buy = {
+        "グランビルの法則(買い①: 買い転換)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4], # 中長期
+        "グランビルの法則(買い②: 押し目買い)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4], # 中長期
+        "グランビルの法則(買い③: 買い乗せ)": [0, 0, 0, 0.2, 0.4, 0.4, 0],   # 短中期
+        "ゴールデンクロス(5日/20日)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
+        "MACD上抜け": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
+        "一目均衡表(三役好転)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
+        "ダウ理論(上昇波)": [0, 0, 0, 0.6, 0.4, 0, 0],                     # 短期
+        "パーフェクトオーダー(買い)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
+        "過去半年の新高値ブレイクアウト": [0, 0, 0, 0.1, 0.2, 0.3, 0.4]
     }
     
-    st.sidebar.header("設定")
-    selected_name = st.sidebar.selectbox("分析する銘柄を選択", list(tickers.keys()))
-    selected_ticker = tickers[selected_name]
+    weights_sell = {
+        "グランビルの法則(売り①: 売り転換)": [0, 0, 0, 1.0, 0, 0, 0], # 売りは早く進むため1週を重視
+        "グランビルの法則(売り②: 戻り売り)": [0, 0, 0, 1.0, 0, 0, 0],
+        "グランビルの法則(売り③: 売り乗せ)": [0.2, 0.3, 0.5, 0, 0, 0, 0], # 短中期
+        "デッドクロス(5日/20日)": [0, 0, 0, 1.0, 0, 0, 0],
+        "MACD下抜け": [0, 0, 0, 1.0, 0, 0, 0],
+        "ダウ理論(下降波)": [0.4, 0.3, 0.3, 0, 0, 0, 0],                 # 短期
+        "ローソク足(包み足・陰線)": [0.4, 0.3, 0.3, 0, 0, 0, 0],
+        "ローソク足(否定陰線)": [0.4, 0.3, 0.3, 0, 0, 0, 0]
+    }
+
+    # 全行走査してシグナル発生日とその後のリターンを取得
+    for i in range(len(df)):
+        buy_sigs = df['Buy_Signals'].iloc[i]
+        sell_sigs = df['Sell_Signals'].iloc[i]
+        
+        date = df.index[i]
+        close_price = df['Close'].iloc[i]
+        
+        # 直近のシグナルほど重みを大きくする (3年前=0.2, 最新=1.0)
+        days_diff = (current_date - date).days
+        time_weight = max(0.2, 1.0 - (days_diff / 1095) * 0.8)
+        
+        # 将来の価格を取得 (1日, 2日, 3日, 1週, 2週, 3週, 4週)
+        future_prices = []
+        for offset in [1, 2, 3, 5, 10, 15, 20]:
+            if i + offset < len(df):
+                ret = (df['Close'].iloc[i + offset] - close_price) / close_price * 100
+                future_prices.append(ret)
+            else:
+                future_prices.append(np.nan)
+                
+        # 買いシグナル集計
+        for sig in buy_sigs:
+            if sig not in buy_performance:
+                buy_performance[sig] = []
+            buy_performance[sig].append({
+                'returns': future_prices,
+                'weight': time_weight
+            })
+            
+        # 売りシグナル集計
+        for sig in sell_sigs:
+            if sig not in sell_performance:
+                sell_performance[sig] = []
+            sell_performance[sig].append({
+                'returns': future_prices,
+                'weight': time_weight
+            })
+
+    # 集計とスコア計算
+    def aggregate_stats(performance_dict, weight_dict, is_buy=True):
+        stats = []
+        for sig, data_list in performance_dict.items():
+            count = len(data_list)
+            
+            # 各期間の単純平均
+            avg_returns = []
+            for j in range(7):
+                valid_returns = [d['returns'][j] for d in data_list if not np.isnan(d['returns'][j])]
+                avg = np.mean(valid_returns) if valid_returns else np.nan
+                avg_returns.append(avg)
+                
+            # スコアの計算 (時間減衰加重平均 × 性質に応じた期間ウェイト)
+            score = 0
+            period_weights = weight_dict.get(sig, [0,0,0, 0.25, 0.25, 0.25, 0.25])
+            
+            total_weighted_score = 0
+            weight_sum = 0
+            
+            for j in range(7):
+                if period_weights[j] > 0:
+                    valid_data = [d for d in data_list if not np.isnan(d['returns'][j])]
+                    if valid_data:
+                        # その期間の加重平均リターン
+                        weighted_ret_sum = sum(d['returns'][j] * d['weight'] for d in valid_data)
+                        total_weight = sum(d['weight'] for d in valid_data)
+                        weighted_avg_ret = weighted_ret_sum / total_weight
+                        
+                        # 買いならプラス、売りならマイナスを評価
+                        eval_ret = weighted_avg_ret if is_buy else -weighted_avg_ret
+                        
+                        # スコア化 (0% = 50点, +5% = 100点上限)
+                        sub_score = min(max(50 + (eval_ret * 10), 0), 100)
+                        
+                        total_weighted_score += sub_score * period_weights[j]
+                        weight_sum += period_weights[j]
+            
+            final_score = int(total_weighted_score / weight_sum) if weight_sum > 0 else 50
+            if count < 3: # サンプルが少なすぎる場合は信頼性低
+                final_score = int(final_score * 0.8)
+
+            stat = {
+                'シグナル': sig,
+                '点灯回数': count,
+                '精度スコア': final_score,
+            }
+            if is_buy:
+                stat['1週間後'] = avg_returns[3]
+                stat['2週間後'] = avg_returns[4]
+                stat['3週間後'] = avg_returns[5]
+                stat['4週間後'] = avg_returns[6]
+            else:
+                stat['1日後'] = avg_returns[0]
+                stat['2日後'] = avg_returns[1]
+                stat['3日後'] = avg_returns[2]
+                stat['1週間後'] = avg_returns[3]
+            
+            stats.append(stat)
+        
+        df_stats = pd.DataFrame(stats)
+        if not df_stats.empty:
+            df_stats = df_stats.sort_values('精度スコア', ascending=False).reset_index(drop=True)
+        return df_stats
+
+    df_buy_stats = aggregate_stats(buy_performance, weights_buy, is_buy=True)
+    df_sell_stats = aggregate_stats(sell_performance, weights_sell, is_buy=False)
     
-    if st.sidebar.button("🔄 データを最新に更新 (キャッシュクリア)", type="primary"):
-        st.cache_data.clear()
-        st.rerun()
+    return df_buy_stats, df_sell_stats
 
-    if st.button("🚀 総合診断を実行", type="primary", use_container_width=True):
-        with st.spinner(f"{selected_name} の過去3年分のデータを取得・解析中..."):
-            
-            # --- データ取得 (3年間) ---
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=365*3)
-            
-            try:
-                df = yf.download(selected_ticker, start=start_date, end=end_date)
-                if df.empty:
-                    st.error("データの取得に失敗しました。")
-                    return
-            except Exception as e:
-                st.error(f"エラーが発生しました: {e}")
-                return
-            
-            # --- シグナル計算 ---
-            df = calculate_signals(df)
-            
-            # --- 直近のデータとAI予測 ---
-            latest_data = df.iloc[-1]
-            latest_date = df.index[-1].strftime('%Y-%m-%d')
-            prev_data = df.iloc[-2]
-            
-            prob_dict, model = train_predict_trend(df)
-            
-            st.markdown("---")
-            st.header(f"📈 {selected_name} 総合診断結果 ({latest_date})")
-            
-            # Step 1: 現在のトレンドとAI予測
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Step 1: 現在のトレンド状態")
-                current_price = latest_data['Close']
-                sma20 = latest_data['SMA_20']
-                sma20_diff = sma20 - prev_data['SMA_20']
-                
-                if sma20_diff > 0 and current_price > sma20:
-                    trend_msg = "🟢 上昇トレンド (SMA20上向き ＆ 株価がSMA20の上)"
-                elif sma20_diff < 0 and current_price < sma20:
-                    trend_msg = "🔴 下落トレンド (SMA20下向き ＆ 株価がSMA20の下)"
+def predict_trend_rf(df):
+    """ランダムフォレストによる1ヶ月後のトレンド予測 (3クラス)"""
+    # 特徴量の作成
+    features = ['SMA_5', 'SMA_20', 'SMA_60', 'MACD', 'Signal', 'RSI']
+    
+    # 目的変数の作成 (20日後の価格が、現在より +3%以上ならUp, -3%以下ならDown, それ以外はNeutral)
+    df['Future_Close'] = df['Close'].shift(-20)
+    df['Return_20d'] = (df['Future_Close'] - df['Close']) / df['Close']
+    
+    def classify_trend(ret):
+        if pd.isna(ret): return np.nan
+        if ret >= 0.03: return 2 # Up
+        elif ret <= -0.03: return 0 # Down
+        else: return 1 # Neutral
+        
+    df['Target'] = df['Return_20d'].apply(classify_trend)
+    
+    # 学習用データの準備 (特徴量だけで欠損値処理をする)
+    model_df = df[features + ['Target']].copy()
+    model_df = model_df.dropna() # AI予測に必要なデータのみでNaN削除
+    
+    if len(model_df) < 100:
+        return None, None
+        
+    X = model_df[features]
+    y = model_df['Target']
+    
+    # ランダムフォレストモデルの構築 (安定の200本)
+    rf = RandomForestClassifier(n_estimators=200, random_state=42)
+    rf.fit(X, y)
+    
+    # 直近データの予測
+    latest_features = df[features].iloc[-1:].fillna(method='ffill')
+    prediction = rf.predict(latest_features)[0]
+    probabilities = rf.predict_proba(latest_features)[0]
+    
+    # 結果の整形
+    classes = ["下降 (Down)", "もみ合い (Neutral)", "上昇 (Up)"]
+    result_text = classes[int(prediction)]
+    
+    probs_dict = {
+        "下降": probabilities[0] if len(probabilities) > 0 else 0,
+        "もみ合い": probabilities[1] if len(probabilities) > 1 else 0,
+        "上昇": probabilities[2] if len(probabilities) > 2 else 0
+    }
+    
+    return result_text, probs_dict
+
+def create_chart(df):
+    """Plotlyによるインタラクティブなローソク足チャート (3年分)"""
+    fig = go.Figure()
+
+    # ローソク足
+    fig.add_trace(go.Candlestick(x=df.index,
+                open=df['Open'], high=df['High'],
+                low=df['Low'], close=df['Close'],
+                name='ローソク足',
+                increasing_line_color='#ef5350', decreasing_line_color='#26a69a'))
+
+    # 移動平均線
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA_5'], name='5日線', line=dict(color='orange', width=1)))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], name='20日線', line=dict(color='blue', width=1)))
+    fig.add_trace(go.Scatter(x=df.index, y=df['SMA_60'], name='60日線', line=dict(color='green', width=1)))
+
+    # シグナルのプロット (ダウ理論とその他を分離)
+    buy_dates_dow, buy_prices_dow, buy_texts_dow = [], [], []
+    buy_dates_other, buy_prices_other, buy_texts_other = [], [], []
+    
+    sell_dates_dow, sell_prices_dow, sell_texts_dow = [], [], []
+    sell_dates_other, sell_prices_other, sell_texts_other = [], [], []
+
+    for i in range(len(df)):
+        if df['Buy_Signals'].iloc[i]:
+            for sig in df['Buy_Signals'].iloc[i]:
+                if "ダウ理論" in sig:
+                    buy_dates_dow.append(df.index[i])
+                    buy_prices_dow.append(df['Low'].iloc[i] * 0.96) # 少し下に離す
+                    buy_texts_dow.append(sig)
                 else:
-                    trend_msg = "🟡 ボックストレンド (方向感なし)"
+                    buy_dates_other.append(df.index[i])
+                    buy_prices_other.append(df['Low'].iloc[i] * 0.98)
+                    buy_texts_other.append(sig)
                     
-                st.info(trend_msg)
-                
-                st.markdown("**直近1週間の値動き (四本値)**")
-                recent_5d = df.tail(5)[['Open', 'High', 'Low', 'Close']].round(1)
-                recent_5d.index = recent_5d.index.strftime('%m/%d')
-                st.table(recent_5d.T)
-                
-            with col2:
-                st.subheader("🤖 AIによる1ヶ月後のトレンド予測")
-                if prob_dict:
-                    st.write("過去3年のデータから算出した、20営業日後の状態確率")
-                    
-                    p_up = prob_dict.get(1, 0) * 100
-                    p_box = prob_dict.get(0, 0) * 100
-                    p_down = prob_dict.get(-1, 0) * 100
-                    
-                    st.metric("🟢 上昇トレンドにいる確率", f"{p_up:.1f}%")
-                    st.metric("🟡 ボックストレンドにいる確率", f"{p_box:.1f}%")
-                    st.metric("🔴 下落トレンドにいる確率", f"{p_down:.1f}%")
-                    
-                    # プログレスバー風の視覚化
-                    st.progress(prob_dict.get(1, 0), text="上昇")
-                    st.progress(prob_dict.get(-1, 0), text="下落")
+        if df['Sell_Signals'].iloc[i]:
+            for sig in df['Sell_Signals'].iloc[i]:
+                if "ダウ理論" in sig:
+                    sell_dates_dow.append(df.index[i])
+                    sell_prices_dow.append(df['High'].iloc[i] * 1.04) # 少し上に離す
+                    sell_texts_dow.append(sig)
                 else:
-                    st.warning("データ不足のためAI予測を実行できません。")
+                    sell_dates_other.append(df.index[i])
+                    sell_prices_other.append(df['High'].iloc[i] * 1.02)
+                    sell_texts_other.append(sig)
 
-            st.markdown("---")
-            st.subheader("Step 2 & 3: 直近で点灯中のシグナル")
-            
-            # 直近20日で点灯したシグナルを抽出するヘルパー関数
-            def get_recent_signals(df, col_name, days=20):
-                recent = df[col_name].tail(days)
-                if recent.any():
-                    date = recent[recent == True].index[-1].strftime('%Y-%m-%d')
-                    return True, date
-                return False, "-"
+    # 買いシグナルマーカー
+    fig.add_trace(go.Scatter(x=buy_dates_other, y=buy_prices_other, mode='markers',
+                             marker=dict(symbol='triangle-up', color='cyan', size=10, line=dict(width=1, color='DarkSlateGrey')),
+                             name='買いシグナル', text=buy_texts_other, hoverinfo='text+x'))
+                             
+    # ダウ理論(買い)マーカー (黄色の星)
+    fig.add_trace(go.Scatter(x=buy_dates_dow, y=buy_prices_dow, mode='markers',
+                             marker=dict(symbol='star', color='gold', size=12, line=dict(width=1, color='DarkSlateGrey')),
+                             name='ダウ理論(買い)', text=buy_texts_dow, hoverinfo='text+x'))
 
-            buy_signals_map = {
-                "グランビルの法則(買い①: 転換)": "Sig_Granville_Buy_1",
-                "グランビルの法則(買い②: 押し目)": "Sig_Granville_Buy_2",
-                "グランビルの法則(買い③: 乗せ)": "Sig_Granville_Buy_3",
-                "ゴールデンクロス(5日/20日)": "Sig_GC",
-                "パーフェクトオーダー": "Sig_PO_Buy",
-                "新高値ブレイクアウト(半年)": "Sig_Breakout_Buy",
-                "MACD上抜け": "Sig_MACD_Buy",
-                "ダウ理論(上昇波)": "Sig_Dow_Buy",
-                "一目均衡表(三役好転)": "Sig_Ichimoku_Buy"
-            }
-            
-            sell_signals_map = {
-                "グランビルの法則(売り①: 転換)": "Sig_Granville_Sell_1",
-                "グランビルの法則(売り②: 戻り)": "Sig_Granville_Sell_2",
-                "グランビルの法則(売り③: 乗せ)": "Sig_Granville_Sell_3",
-                "デッドクロス(5日/20日)": "Sig_DC",
-                "MACD下抜け": "Sig_MACD_Sell",
-                "ダウ理論(下落波)": "Sig_Dow_Sell",
-                "一目均衡表(三役逆転)": "Sig_Ichimoku_Sell",
-                "ローソク足(包み足・陰線)": "Sig_Engulfing_Sell",
-                "ローソク足(否定陰線)": "Sig_Negation_Sell"
-            }
-            
-            col_buy, col_sell = st.columns(2)
-            
-            with col_buy:
-                st.success("🟢 【買い】シグナル (直近20日)")
-                for name, col in buy_signals_map.items():
-                    act, date = get_recent_signals(df, col)
-                    if act:
-                        score = calculate_signal_score(df, col, True)
-                        st.write(f"- **{name}** (点灯日: {date}) - 精度: **{score:.1f}点**")
-                        
-            with col_sell:
-                st.error("🔴 【売り】シグナル (直近20日)")
-                for name, col in sell_signals_map.items():
-                    act, date = get_recent_signals(df, col)
-                    if act:
-                        score = calculate_signal_score(df, col, False)
-                        st.write(f"- **{name}** (点灯日: {date}) - 精度: **{score:.1f}点**")
+    # 売りシグナルマーカー
+    fig.add_trace(go.Scatter(x=sell_dates_other, y=sell_prices_other, mode='markers',
+                             marker=dict(symbol='triangle-down', color='magenta', size=10, line=dict(width=1, color='DarkSlateGrey')),
+                             name='売りシグナル', text=sell_texts_other, hoverinfo='text+x'))
+                             
+    # ダウ理論(売り)マーカー (紫色の星)
+    fig.add_trace(go.Scatter(x=sell_dates_dow, y=sell_prices_dow, mode='markers',
+                             marker=dict(symbol='star', color='purple', size=12, line=dict(width=1, color='white')),
+                             name='ダウ理論(売り)', text=sell_texts_dow, hoverinfo='text+x'))
 
-            st.markdown("---")
-            with st.expander("📈 過去3年間のシグナル実績（平均変動割合）", expanded=False):
-                st.write("過去3年間における各シグナル点灯後の平均株価変動率（%）と、直近の成績を重視した総合精度スコアです。")
-                
-                # 買い実績集計
-                buy_rows = []
-                for name, col in buy_signals_map.items():
-                    score = calculate_signal_score(df, col, True)
-                    idx_list = df.index[df[col] == True]
-                    count = len(idx_list)
-                    
-                    r_1w, r_2w, r_3w, r_4w = [], [], [], []
-                    for idx in idx_list:
-                        try:
-                            pos = df.index.get_loc(idx)
-                            p = df['Close'].iloc[pos]
-                            if pos+5 < len(df): r_1w.append((df['Close'].iloc[pos+5]-p)/p*100)
-                            if pos+10 < len(df): r_2w.append((df['Close'].iloc[pos+10]-p)/p*100)
-                            if pos+15 < len(df): r_3w.append((df['Close'].iloc[pos+15]-p)/p*100)
-                            if pos+20 < len(df): r_4w.append((df['Close'].iloc[pos+20]-p)/p*100)
-                        except: pass
-                    
-                    buy_rows.append({
-                        "シグナル名": name,
-                        "点灯回数": count,
-                        "精度スコア": round(score, 1),
-                        "1週後": f"{np.mean(r_1w):.1f}%" if r_1w else "-",
-                        "2週後": f"{np.mean(r_2w):.1f}%" if r_2w else "-",
-                        "3週後": f"{np.mean(r_3w):.1f}%" if r_3w else "-",
-                        "4週後": f"{np.mean(r_4w):.1f}%" if r_4w else "-"
-                    })
-                
-                st.subheader("🟢 買いシグナル実績")
-                st.table(pd.DataFrame(buy_rows).set_index("シグナル名"))
-                
-                # 売り実績集計
-                sell_rows = []
-                for name, col in sell_signals_map.items():
-                    score = calculate_signal_score(df, col, False)
-                    idx_list = df.index[df[col] == True]
-                    count = len(idx_list)
-                    
-                    r_1d, r_2d, r_3d, r_1w = [], [], [], []
-                    for idx in idx_list:
-                        try:
-                            pos = df.index.get_loc(idx)
-                            p = df['Close'].iloc[pos]
-                            if pos+1 < len(df): r_1d.append((df['Close'].iloc[pos+1]-p)/p*100)
-                            if pos+2 < len(df): r_2d.append((df['Close'].iloc[pos+2]-p)/p*100)
-                            if pos+3 < len(df): r_3d.append((df['Close'].iloc[pos+3]-p)/p*100)
-                            if pos+5 < len(df): r_1w.append((df['Close'].iloc[pos+5]-p)/p*100)
-                        except: pass
-                        
-                    sell_rows.append({
-                        "シグナル名": name,
-                        "点灯回数": count,
-                        "精度スコア": round(score, 1),
-                        "1日後": f"{np.mean(r_1d):.1f}%" if r_1d else "-",
-                        "2日後": f"{np.mean(r_2d):.1f}%" if r_2d else "-",
-                        "3日後": f"{np.mean(r_3d):.1f}%" if r_3d else "-",
-                        "1週後": f"{np.mean(r_1w):.1f}%" if r_1w else "-"
-                    })
-                
-                st.subheader("🔴 売りシグナル実績")
-                st.table(pd.DataFrame(sell_rows).set_index("シグナル名"))
+    fig.update_layout(
+        title="株価チャート (過去3年)",
+        yaxis_title='株価',
+        xaxis_rangeslider_visible=False,
+        height=600,
+        margin=dict(l=50, r=50, t=50, b=50),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    return fig
 
-            st.markdown("---")
-            with st.expander("📊 ローソク足チャート ＆ シグナル発生ポイント (全期間)", expanded=True):
-                
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                                   vertical_spacing=0.03, row_heights=[0.7, 0.3])
-                
-                # ローソク足
-                fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'],
-                                             low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
-                
-                # 移動平均線
-                fig.add_trace(go.Scatter(x=df.index, y=df['SMA_5'], line=dict(color='orange', width=1), name='SMA 5'), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], line=dict(color='blue', width=1.5), name='SMA 20'), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df['SMA_60'], line=dict(color='green', width=1.5), name='SMA 60'), row=1, col=1)
-                
-                # 雲 (一目均衡表)
-                fig.add_trace(go.Scatter(x=df.index, y=df['Senkou_A'], line=dict(color='rgba(0,0,0,0)'), showlegend=False), row=1, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df['Senkou_B'], line=dict(color='rgba(0,0,0,0)'), fill='tonexty', fillcolor='rgba(128, 128, 128, 0.2)', name='Cloud'), row=1, col=1)
+def analyze_and_display(ticker_symbol):
+    """1銘柄ごとの分析とUI表示を行う"""
+    df = fetch_data(ticker_symbol)
+    
+    if df.empty:
+        st.error(f"データが取得できませんでした: {ticker_symbol}")
+        return
 
-                # マーカー描画用のヘルパー関数
-                def add_markers(df, col_names, is_buy, is_dow=False):
-                    x_dates = []
-                    y_prices = []
-                    texts = []
-                    
-                    for idx, row in df.iterrows():
-                        active_sigs = []
-                        for name, col in col_names.items():
-                            if pd.notna(row.get(col)) and bool(row.get(col)):
-                                active_sigs.append(name)
-                        
-                        if active_sigs:
-                            x_dates.append(idx)
-                            # 買いは安値の下、売りは高値の上に少しずらして配置
-                            offset = row['Close'] * 0.02
-                            y_prices.append(row['Low'] - offset if is_buy else row['High'] + offset)
-                            texts.append("<br>".join(active_sigs))
-                    
-                    if x_dates:
-                        if is_dow:
-                            color = 'yellow' if is_buy else 'purple'
-                            symbol = 'star'
-                            size = 12
-                            name_suffix = "ダウ理論"
-                        else:
-                            color = '#00BCD4' if is_buy else '#E91E63' # 買い:水色, 売り:ピンク
-                            symbol = 'triangle-up' if is_buy else 'triangle-down'
-                            size = 10
-                            name_suffix = "一般"
-                            
-                        fig.add_trace(go.Scatter(
-                            x=x_dates, y=y_prices, mode='markers',
-                            marker=dict(symbol=symbol, size=size, color=color, line=dict(width=1, color='black')),
-                            name=f'{"Buy" if is_buy else "Sell"} Signal ({name_suffix})',
-                            text=texts, hoverinfo='text'
-                        ), row=1, col=1)
+    # シグナル計算
+    df = calculate_signals(df)
+    
+    # 実績スコアの計算
+    df_buy_stats, df_sell_stats = calculate_signal_performance(df)
+    
+    # 辞書化してスコアを引きやすくする
+    score_dict_buy = dict(zip(df_buy_stats['シグナル'], df_buy_stats['精度スコア'])) if not df_buy_stats.empty else {}
+    score_dict_sell = dict(zip(df_sell_stats['シグナル'], df_sell_stats['精度スコア'])) if not df_sell_stats.empty else {}
 
-                # 一般シグナルの描画 (ダウ以外)
-                buy_general = {k:v for k,v in buy_signals_map.items() if "ダウ" not in k}
-                sell_general = {k:v for k,v in sell_signals_map.items() if "ダウ" not in k}
-                add_markers(df, buy_general, is_buy=True, is_dow=False)
-                add_markers(df, sell_general, is_buy=False, is_dow=False)
+    latest_date = df.index[-1].strftime("%Y-%m-%d")
+    latest_close = df['Close'].iloc[-1]
+    prev_close = df['Close'].iloc[-2]
+    diff = latest_close - prev_close
+    diff_pct = (diff / prev_close) * 100
+
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    with col1:
+        st.metric(label=f"最新終値 ({latest_date})", 
+                  value=f"{latest_close:,.1f}", 
+                  delta=f"{diff:,.1f} ({diff_pct:,.2f}%)")
+
+    # 直近5日間の四本値テーブル
+    recent_5d = df[['Open', 'High', 'Low', 'Close']].tail(5).sort_index(ascending=False)
+    recent_5d.index = recent_5d.index.strftime('%Y-%m-%d')
+    recent_5d = recent_5d.round(1)
+    
+    with st.expander("📊 直近5日間の四本値 (始値・高値・安値・終値)"):
+        st.dataframe(recent_5d.T, use_container_width=True)
+
+    # 現在のシグナル取得
+    current_buy_signals = df['Buy_Signals'].iloc[-1]
+    current_sell_signals = df['Sell_Signals'].iloc[-1]
+
+    col_sig1, col_sig2 = st.columns(2)
+    with col_sig1:
+        st.markdown("### 🟢 Step2: 買いシグナル")
+        if current_buy_signals:
+            for sig in current_buy_signals:
+                score = score_dict_buy.get(sig, "N/A")
+                st.success(f"✔️ {sig} (精度: {score}点)")
+        else:
+            st.write("点灯中の買いシグナルはありません。")
+
+    with col_sig2:
+        st.markdown("### 🔴 Step3: 売りシグナル")
+        if current_sell_signals:
+            for sig in current_sell_signals:
+                score = score_dict_sell.get(sig, "N/A")
+                st.error(f"⚠️ {sig} (精度: {score}点)")
+        else:
+            st.write("点灯中の売りシグナルはありません。")
+
+    # 実績表の表示
+    with st.expander("📈 過去3年間のシグナル実績（平均変動割合）"):
+        col_b_stat, col_s_stat = st.columns(2)
+        with col_b_stat:
+            st.markdown("**■ 買いシグナル実績**")
+            if not df_buy_stats.empty:
+                # エラー回避のため、背景グラデーションは使わずフォーマットのみ
+                st.dataframe(df_buy_stats.style.format({
+                    '1週間後': '{:.2f}%', '2週間後': '{:.2f}%', '3週間後': '{:.2f}%', '4週間後': '{:.2f}%'
+                }, na_rep='-'), use_container_width=True)
+            else:
+                st.write("データがありません")
                 
-                # ダウ理論の描画
-                buy_dow = {k:v for k,v in buy_signals_map.items() if "ダウ" in k}
-                sell_dow = {k:v for k,v in sell_signals_map.items() if "ダウ" in k}
-                add_markers(df, buy_dow, is_buy=True, is_dow=True)
-                add_markers(df, sell_dow, is_buy=False, is_dow=True)
+        with col_s_stat:
+            st.markdown("**■ 売りシグナル実績**")
+            if not df_sell_stats.empty:
+                 st.dataframe(df_sell_stats.style.format({
+                    '1日後': '{:.2f}%', '2日後': '{:.2f}%', '3日後': '{:.2f}%', '1週間後': '{:.2f}%'
+                }, na_rep='-'), use_container_width=True)
+            else:
+                st.write("データがありません")
 
-                # MACD (下段)
-                fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], line=dict(color='blue', width=1), name='MACD'), row=2, col=1)
-                fig.add_trace(go.Scatter(x=df.index, y=df['MACD_Signal'], line=dict(color='red', width=1), name='Signal'), row=2, col=1)
-                fig.add_trace(go.Bar(x=df.index, y=df['MACD'] - df['MACD_Signal'], name='Histogram', marker_color='gray'), row=2, col=1)
+    # AI予測
+    st.markdown("### 🤖 Step4: AIによる1ヶ月後のトレンド予測")
+    prediction_text, probs = predict_trend_rf(df)
+    
+    if prediction_text:
+        st.markdown(f"**予測結果:** 【 {prediction_text} 】")
+        
+        # プログレスバー風に確率を表示
+        st.write("各トレンドの確率:")
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            st.caption(f"上昇: {probs['上昇']*100:.1f}%")
+            st.progress(float(probs['上昇']))
+        with col_p2:
+            st.caption(f"もみ合い: {probs['もみ合い']*100:.1f}%")
+            st.progress(float(probs['もみ合い']))
+        with col_p3:
+             st.caption(f"下降: {probs['下降']*100:.1f}%")
+             st.progress(float(probs['下降']))
+    else:
+        st.write("データ不足のためAI予測を実行できません。")
 
-                fig.update_layout(height=800, title_text=f"{selected_name} テクニカルチャート (過去3年)", xaxis_rangeslider_visible=False)
-                st.plotly_chart(fig, use_container_width=True)
+    # チャート表示
+    with st.expander("📉 チャートを表示 (過去3年間・シグナルマーカー付き)"):
+        fig = create_chart(df)
+        st.plotly_chart(fig, use_container_width=True)
 
 if __name__ == "__main__":
     main()
