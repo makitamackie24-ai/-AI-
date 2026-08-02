@@ -189,12 +189,15 @@ def train_predict_trend(df):
     ランダムフォレストを用いて、1ヶ月後（20営業日後）のトレンドを予測
     クラス: 1(上昇), 0(ボックス), -1(下落)
     """
-    df_ml = df.copy().dropna()
+    # 必要な特徴量だけを抽出し、それらにNaNが含まれる行のみを削除する
+    # (全体をdropnaすると、一目均衡表の遅行スパン等の影響で直近26日間のデータが全て消えてしまうため)
+    features = ['SMA_5', 'SMA_20', 'SMA_60', 'MACD', 'RSI', 'Close']
+    df_ml = df[features].copy()
+    df_ml = df_ml.dropna()
+    
     if len(df_ml) < 100:
         return None, None
         
-    # 特徴量
-    features = ['SMA_5', 'SMA_20', 'SMA_60', 'MACD', 'RSI', 'Close']
     X = df_ml[features].copy()
     
     # 目的変数（20日後のSMA20とCloseの関係でトレンドを定義）
@@ -321,11 +324,24 @@ def main():
     st.markdown("直近のシグナル点灯状況、3年間の統計的実績、およびAIによるトレンド予測を統合した分析ダッシュボードです。")
     
     tickers = {
-        '日経平均': '^N225',
-        'TOPIX': '^TOPX',
+        '日経平均 (日本)': '^N225',
+        'TOPIX (日本)': '^TOPX',
+        'マザーズ指数 (日本)': '^MOTHERS',
+        'S&P 500 (米国)': '^GSPC',
+        'NYダウ (米国)': '^DJI',
+        'NASDAQ (米国)': '^IXIC',
         'トヨタ自動車': '7203.T',
         '三菱UFJ': '8306.T',
-        'ソフトバンクG': '9984.T'
+        '三井住友FG': '8316.T',
+        'ソフトバンクG': '9984.T',
+        'ソニーG': '6758.T',
+        'ファーストリテイリング': '9983.T',
+        'Apple': 'AAPL',
+        'Microsoft': 'MSFT',
+        'NVIDIA': 'NVDA',
+        'Tesla': 'TSLA',
+        'Bitcoin (BTC/USD)': 'BTC-USD',
+        'USD/JPY (ドル円)': 'JPY=X'
     }
     
     st.sidebar.header("設定")
