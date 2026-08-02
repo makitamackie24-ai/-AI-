@@ -389,8 +389,8 @@ def predict_trend_rf(df):
     rf = RandomForestClassifier(n_estimators=200, random_state=42)
     rf.fit(X, y)
     
-    # 直近データの予測
-    latest_features = df[features].iloc[-1:].fillna(method='ffill')
+    # 直近データの予測 (Pandasの最新仕様に合わせてffill()を使用)
+    latest_features = df[features].ffill().iloc[-1:]
     prediction = rf.predict(latest_features)[0]
     probabilities = rf.predict_proba(latest_features)[0]
     
