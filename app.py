@@ -521,28 +521,47 @@ def analyze_and_display(ticker_symbol):
     with st.expander("📊 直近5日間の四本値 (始値・高値・安値・終値)"):
         st.dataframe(recent_5d.T, use_container_width=True)
 
-    # 現在のシグナル取得
-    current_buy_signals = df['Buy_Signals'].iloc[-1]
-    current_sell_signals = df['Sell_Signals'].iloc[-1]
+    # 直近5日間のシグナルを集約して取得
+    recent_buy_signals = {}
+    recent_sell_signals = {}
+    
+    for i in range(1, 6):
+        if len(df) >= i:
+            idx = -i
+            date_str = df.index[idx].strftime('%m/%d')
+            
+            for sig in df['Buy_Signals'].iloc[idx]:
+                if sig not in recent_buy_signals:
+                    recent_buy_signals[sig] = []
+                recent_buy_signals[sig].append(date_str)
+                
+            for sig in df['Sell_Signals'].iloc[idx]:
+                if sig not in recent_sell_signals:
+                    recent_sell_signals[sig] = []
+                recent_sell_signals[sig].append(date_str)
 
     col_sig1, col_sig2 = st.columns(2)
     with col_sig1:
-        st.markdown("### 🟢 Step2: 買いシグナル")
-        if current_buy_signals:
-            for sig in current_buy_signals:
+        st.markdown("### 🟢 Step2: 直近の買いシグナル")
+        st.caption("※直近5営業日以内に点灯したものを表示")
+        if recent_buy_signals:
+            for sig, dates in recent_buy_signals.items():
                 score = score_dict_buy.get(sig, "N/A")
-                st.success(f"✔️ {sig} (精度: {score}点)")
+                dates_str = ", ".join(dates)
+                st.success(f"✔️ **{sig}** (精度: {score}点)\n\n点灯日: {dates_str}")
         else:
-            st.write("点灯中の買いシグナルはありません。")
+            st.write("直近5日間で点灯した買いシグナルはありません。")
 
     with col_sig2:
-        st.markdown("### 🔴 Step3: 売りシグナル")
-        if current_sell_signals:
-            for sig in current_sell_signals:
+        st.markdown("### 🔴 Step3: 直近の売りシグナル")
+        st.caption("※直近5営業日以内に点灯したものを表示")
+        if recent_sell_signals:
+            for sig, dates in recent_sell_signals.items():
                 score = score_dict_sell.get(sig, "N/A")
-                st.error(f"⚠️ {sig} (精度: {score}点)")
+                dates_str = ", ".join(dates)
+                st.error(f"⚠️ **{sig}** (精度: {score}点)\n\n点灯日: {dates_str}")
         else:
-            st.write("点灯中の売りシグナルはありません。")
+            st.write("直近5日間で点灯した売りシグナルはありません。")
 
     # 実績表の表示
     with st.expander("📈 過去3年間のシグナル実績（平均変動割合）"):
