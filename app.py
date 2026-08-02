@@ -15,7 +15,33 @@ def calculate_signals(df):
     """各種テクニカル指標とシグナルを計算する関数"""
     df = df.copy()
     
-    # --- 基本の移動平均線 ---
+    # yfinanceのバージョンや取得状況によって列がMultiIndexになる場合の対策
+    if isinstance(df.columns, pd.MultiIndex):
+        # 必要な列だけを抽出し、フラットなSeriesにする
+        open_col = df['Open'].iloc[:, 0] if isinstance(df['Open'], pd.DataFrame) else df['Open']
+        high_col = df['High'].iloc[:, 0] if isinstance(df['High'], pd.DataFrame) else df['High']
+        low_col = df['Low'].iloc[:, 0] if isinstance(df['Low'], pd.DataFrame) else df['Low']
+        close_col = df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close']
+        
+        # 新しいDataFrameとして再構築
+        df = pd.DataFrame({
+            'Open': open_col,
+            'High': high_col,
+            'Low': low_col,
+            'Close': close_col
+        })
+    else:
+        # 万が一DataFrameになっている列があればSeriesにする
+        for col in ['Open', 'High', 'Low', 'Close']:
+            if isinstance(df[col], pd.DataFrame):
+                df[col] = df[col].iloc[:, 0]
+
+    # 数値型に明示的に変換（エラー防止）
+    df['Close'] = pd.to_numeric(df['Close'])
+    df['Open'] = pd.to_numeric(df['Open'])
+    df['High'] = pd.to_numeric(df['High'])
+    df['Low'] = pd.to_numeric(df['Low'])
+    
     df['SMA_5'] = df['Close'].rolling(window=5).mean()
     df['SMA_20'] = df['Close'].rolling(window=20).mean()
     df['SMA_60'] = df['Close'].rolling(window=60).mean() # パーフェクトオーダー用
