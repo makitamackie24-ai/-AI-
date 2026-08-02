@@ -1,19 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-from sklearn.ensemble import RandomForestClassifier
-
-# ページ設定
-st.set_page_config(page_title="多角的シグナル検知 AI株価予測ツール", layout="wide")
-
-def main():
-    st.title("📈 多角的シグナル検知 AI株価予測ツール (完全版)")
-    st.write("移動平均線、一目均衡表、グランビル、ダウ理論、ローソク足パターン等を組み合わせた多角的シグナル検知＆AI予測")
-
-    # 指定された10銘柄
+    # 指定された銘柄リスト
     tickers = {
         "NTT(株)": "9432.T",
         "ソフトバンク(株)": "9434.T",
@@ -24,7 +12,18 @@ def main():
         "ホンダ": "7267.T",
         "伊藤忠商事(株)": "8001.T",
         "楽天グループ(株)": "4755.T",
-        "野村ホールディングス(株)": "8604.T"
+        "野村ホールディングス(株)": "8604.T",
+        "住友電気工業(株)": "5802.T",
+        "(株)三菱ＵＦＪフィナンシャル・グループ": "8306.T",
+        "ソニーグループ(株)": "6758.T",
+        "トヨタ自動車(株)": "7203.T",
+        "(株)ＳＵＭＣＯ": "3436.T",
+        "三菱重工業(株)": "7011.T",
+        "三菱自動車(株)": "7211.T",
+        "川崎重工業(株)": "7012.T",
+        "ＬＩＮＥヤフー(株)": "4689.T",
+        "(株)ＩＨＩ": "7013.T",
+        "住友商事(株)": "8053.T"
     }
 
     selected_names = st.sidebar.multiselect("対象銘柄を選択", list(tickers.keys()), default=list(tickers.keys()))
