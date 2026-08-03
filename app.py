@@ -541,11 +541,11 @@ def main():
         my_bar.progress(1.0, text="解析完了！")
 
 # --- サイドバー設定 ---
-    if st.sidebar.button("🔄 データを最新に更新 (キャッシュクリア)"):
+    if st.sidebar.button("🔄 キャッシュクリア"):
         st.cache_data.clear()
 
 # --- 備忘録（シグナル定義・数値基準） ---
-    with st.sidebar.expander("📖 備忘録（シグナル判断の数値基準）"):
+    with st.sidebar.expander("📖 シグナル判断の数値基準"):
         st.markdown("""
         ### 📈 買いシグナル
         * **パーフェクトオーダー(買い)**
