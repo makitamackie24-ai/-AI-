@@ -577,14 +577,6 @@ def main():
         * **RSI買われすぎ**
           14日間のRSIが `70%超` になった最初の日。
         """)
-
-# --- 備忘録（フリーメモ帳） ---
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("📝 フリー備忘録")
-    user_memo = st.sidebar.text_area(
-        "相場の気づきやマイルールなどを自由にメモできます", 
-        height=150, 
-        placeholder="例: RSIが30を下回ったら打診買いを検討する..."
     )    
 
 if __name__ == "__main__":
