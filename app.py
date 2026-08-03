@@ -218,8 +218,8 @@ def predict_trend_rf(df):
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
     
-    # fillna(method='ffill') のエラー修正：.ffill() を使用
-    latest_features = df[features].ffill().iloc[-1:]
+    # 【修正箇所】 df ではなく df_ai を使用して最新の特徴量を取得します
+    latest_features = df_ai[features].ffill().iloc[-1:]
     probs = model.predict_proba(latest_features)[0]
     
     classes = model.classes_
