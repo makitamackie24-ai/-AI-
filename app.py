@@ -541,10 +541,6 @@ def main():
         my_bar.progress(1.0, text="解析完了！")
 
 # --- サイドバー設定 ---
-    st.sidebar.title("設定")
-    selected_name = st.sidebar.selectbox("分析対象の銘柄を選択してください", list(tickers.keys()))
-    ticker_symbol = tickers[selected_name]
-
     if st.sidebar.button("🔄 データを最新に更新 (キャッシュクリア)"):
         st.cache_data.clear()
 
