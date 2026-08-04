@@ -163,6 +163,58 @@ def calculate_signals(df):
         if df['RSI'].iloc[i-1] <= 70 and df['RSI'].iloc[i] > 70:
             df['Sell_Signals'].iloc[i].append("RSI買われすぎ(70超)")
 
+    # ---------------------------
+    # 週足指標とシグナルの計算
+    # ---------------------------
+    # 年と週番号でグループ化
+    df['YearWeek'] = df.index.to_series().apply(lambda x: x.isocalendar()[0:2])
+    
+    weekly_data = []
+    for yw, group in df.groupby('YearWeek'):
+        weekly_data.append({
+            'Date': group.index[-1], # その週の最終営業日
+            'W_Open': group['Open'].iloc[0],
+            'W_High': group['High'].max(),
+            'W_Low': group['Low'].min(),
+            'W_Close': group['Close'].iloc[-1]
+        })
+    df_weekly = pd.DataFrame(weekly_data).set_index('Date')
+    
+    # 週足移動平均 (13週, 26週)
+    df_weekly['W_SMA_13'] = df_weekly['W_Close'].rolling(13).mean()
+    df_weekly['W_SMA_26'] = df_weekly['W_Close'].rolling(26).mean()
+    
+    df_weekly['W_Buy_Signals'] = [[] for _ in range(len(df_weekly))]
+    df_weekly['W_Sell_Signals'] = [[] for _ in range(len(df_weekly))]
+    
+    for i in range(2, len(df_weekly)):
+        # 週足GC
+        if df_weekly['W_SMA_13'].iloc[i-1] <= df_weekly['W_SMA_26'].iloc[i-1] and df_weekly['W_SMA_13'].iloc[i] > df_weekly['W_SMA_26'].iloc[i]:
+            df_weekly['W_Buy_Signals'].iloc[i].append("週足GC(13週/26週)")
+            
+        # 週足DC
+        if df_weekly['W_SMA_13'].iloc[i-1] >= df_weekly['W_SMA_26'].iloc[i-1] and df_weekly['W_SMA_13'].iloc[i] < df_weekly['W_SMA_26'].iloc[i]:
+            df_weekly['W_Sell_Signals'].iloc[i].append("週足DC(13週/26週)")
+            
+        # 週足ダウ理論(買い)
+        if df_weekly['W_Close'].iloc[i] > df_weekly['W_Close'].iloc[i-1] and df_weekly['W_Low'].iloc[i] > df_weekly['W_Low'].iloc[i-1] and df_weekly['W_High'].iloc[i] > df_weekly['W_High'].iloc[i-1]:
+            if df_weekly['W_Close'].iloc[i-1] > df_weekly['W_Close'].iloc[i-2] and df_weekly['W_Low'].iloc[i-1] > df_weekly['W_Low'].iloc[i-2]:
+                df_weekly['W_Buy_Signals'].iloc[i].append("週足ダウ理論(上昇波)")
+
+        # 週足ダウ理論(売り)
+        if df_weekly['W_Close'].iloc[i] < df_weekly['W_Close'].iloc[i-1] and df_weekly['W_High'].iloc[i] < df_weekly['W_High'].iloc[i-1] and df_weekly['W_Low'].iloc[i] < df_weekly['W_Low'].iloc[i-1]:
+            if df_weekly['W_Close'].iloc[i-1] < df_weekly['W_Close'].iloc[i-2] and df_weekly['W_High'].iloc[i-1] < df_weekly['W_High'].iloc[i-2]:
+                df_weekly['W_Sell_Signals'].iloc[i].append("週足ダウ理論(下降波)")
+                
+    # 日足DFに週足シグナルを統合
+    for date in df_weekly.index:
+        if date in df.index:
+            idx = df.index.get_loc(date)
+            df['Buy_Signals'].iloc[idx].extend(df_weekly.loc[date, 'W_Buy_Signals'])
+            df['Sell_Signals'].iloc[idx].extend(df_weekly.loc[date, 'W_Sell_Signals'])
+            
+    df = df.drop(columns=['YearWeek'])
+
     return df
 
 def calculate_signal_performance(df):
@@ -182,7 +234,9 @@ def calculate_signal_performance(df):
         "ダウ理論(上昇波)": [0, 0, 0, 0.6, 0.4, 0, 0],                     
         "パーフェクトオーダー(買い)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
         "過去半年の新高値ブレイクアウト": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
-        "RSI売られすぎ(30未満)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4] # RSI追加
+        "RSI売られすぎ(30未満)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4], # RSI追加
+        "週足GC(13週/26週)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
+        "週足ダウ理論(上昇波)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4]
     }
     
     weights_sell = {
@@ -194,7 +248,9 @@ def calculate_signal_performance(df):
         "ダウ理論(下降波)": [0.4, 0.3, 0.3, 0, 0, 0, 0],                 
         "ローソク足(包み足・陰線)": [0.4, 0.3, 0.3, 0, 0, 0, 0],
         "ローソク足(否定陰線)": [0.4, 0.3, 0.3, 0, 0, 0, 0],
-        "RSI買われすぎ(70超)": [0, 0, 0, 1.0, 0, 0, 0] # RSI追加
+        "RSI買われすぎ(70超)": [0, 0, 0, 1.0, 0, 0, 0], # RSI追加
+        "週足DC(13週/26週)": [0, 0, 0.2, 0.8, 0, 0, 0],
+        "週足ダウ理論(下降波)": [0, 0, 0.2, 0.8, 0, 0, 0]
     }
 
     for i in range(len(df)):
@@ -586,6 +642,10 @@ def main():
         　意味: MACD線がシグナル線を下から上へ突き抜けた状態です。直近の価格モメンタムが上向きに変化したことを示し、トレンド転換や上昇の初期段階を捉える買いサインとして機能します。
         * **RSI売られすぎ**
           14日間のRSIが `30%未満` になった最初の日（逆張りの買いシグナル）。
+        * **週足ダウ理論(上昇波)**
+          週足ベース(その週の最終営業日で判定)で、高値・安値・終値が2週連続で切り上がった状態。中長期のトレンド発生を示唆。
+        * **週足GC(13週/26週)**
+          週足ベースで、13週移動平均線が26週移動平均線を下から上へ突き抜けた状態。中長期の強い買いサイン。
     
         ---
         ### 📉 売りシグナル
@@ -605,6 +665,10 @@ def main():
         　意味: MACD線がシグナル線を上から下へ突き抜けた状態です。直近の価格モメンタムが下向きに変化したことを示し、上昇トレンドの終わりや下落の始まりを警戒する売りサインとなります。
         * **RSI買われすぎ**
           14日間のRSIが `70%超` になった最初の日（短期的な過熱を示す売りシグナル）。
+        * **週足ダウ理論(下降波)**
+          週足ベース(その週の最終営業日で判定)で、高値・安値・終値が2週連続で切り下がった状態。中長期の下降トレンド発生を示唆。
+        * **週足DC(13週/26週)**
+          週足ベースで、13週移動平均線が26週移動平均線を上から下へ突き抜けた状態。中長期の強い売りサイン。
         """) 
 
 if __name__ == "__main__":
