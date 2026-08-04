@@ -422,20 +422,25 @@ def create_chart(df):
     fig.add_trace(go.Scatter(x=df.index, y=df['SMA_60'], name='60日線', line=dict(color='green', width=1)))
 
     buy_categories = [
-        ("移動平均線(買い)", ["ゴールデンクロス", "パーフェクトオーダー", "週足GC"], "triangle-up", "cyan"),
+        ("日足GC", ["ゴールデンクロス"], "triangle-up", "cyan"),
+        ("週足GC", ["週足GC"], "triangle-right", "deepskyblue"),
+        ("PO(買い)", ["パーフェクトオーダー"], "cross", "turquoise"),
         ("MACD(買い)", ["MACD上抜け"], "circle", "lime"),
         ("グランビル(買い)", ["グランビルの法則(買い"], "square", "dodgerblue"),
         ("一目均衡表(買い)", ["一目均衡表"], "diamond", "mediumspringgreen"),
-        ("ダウ理論(買い)", ["ダウ理論(上昇波)", "週足ダウ理論(上昇波)"], "star", "gold"),
+        ("ダウ理論 日足(買い)", ["ダウ理論(上昇波)"], "star", "gold"),
+        ("ダウ理論 週足(買い)", ["週足ダウ理論(上昇波)"], "hexagram", "darkorange"),
         ("RSI(買い)", ["RSI売られすぎ"], "pentagon", "orange"),
-        ("ブレイクアウト", ["新高値ブレイクアウト"], "hexagram", "yellow")
+        ("ブレイクアウト", ["新高値ブレイクアウト"], "asterisk", "yellow")
     ]
     
     sell_categories = [
-        ("移動平均線(売り)", ["デッドクロス", "週足DC"], "triangle-down", "magenta"),
+        ("日足DC", ["デッドクロス"], "triangle-down", "magenta"),
+        ("週足DC", ["週足DC"], "triangle-left", "purple"),
         ("MACD(売り)", ["MACD下抜け"], "circle", "pink"),
         ("グランビル(売り)", ["グランビルの法則(売り"], "square", "violet"),
-        ("ダウ理論(売り)", ["ダウ理論(下降波)", "週足ダウ理論(下降波)"], "star", "purple"),
+        ("ダウ理論 日足(売り)", ["ダウ理論(下降波)"], "star", "darkviolet"),
+        ("ダウ理論 週足(売り)", ["週足ダウ理論(下降波)"], "hexagram", "indigo"),
         ("ローソク足(売り)", ["ローソク足"], "x", "red"),
         ("RSI(売り)", ["RSI買われすぎ"], "pentagon", "crimson")
     ]
@@ -478,14 +483,16 @@ def create_chart(df):
 
     for cat_name, data in buy_plots.items():
         if data['dates']:
+            line_color = 'black' if data['symbol'] in ['star', 'hexagram', 'cross', 'asterisk'] else 'DarkSlateGrey'
             fig.add_trace(go.Scatter(x=data['dates'], y=data['prices'], mode='markers',
-                                     marker=dict(symbol=data['symbol'], color=data['color'], size=11, line=dict(width=1, color='DarkSlateGrey')),
+                                     marker=dict(symbol=data['symbol'], color=data['color'], size=11, line=dict(width=1, color=line_color)),
                                      name=cat_name, text=data['texts'], hoverinfo='text+x'))
 
     for cat_name, data in sell_plots.items():
         if data['dates']:
+            line_color = 'white' if data['symbol'] in ['star', 'hexagram', 'cross', 'asterisk'] else 'DarkSlateGrey'
             fig.add_trace(go.Scatter(x=data['dates'], y=data['prices'], mode='markers',
-                                     marker=dict(symbol=data['symbol'], color=data['color'], size=11, line=dict(width=1, color='white' if data['symbol']=='star' else 'DarkSlateGrey')),
+                                     marker=dict(symbol=data['symbol'], color=data['color'], size=11, line=dict(width=1, color=line_color)),
                                      name=cat_name, text=data['texts'], hoverinfo='text+x'))
 
     fig.update_layout(
