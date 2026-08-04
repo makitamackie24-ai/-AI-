@@ -396,55 +396,78 @@ def create_chart(df):
     fig.add_trace(go.Scatter(x=df.index, y=df['SMA_20'], name='20日線', line=dict(color='blue', width=1)))
     fig.add_trace(go.Scatter(x=df.index, y=df['SMA_60'], name='60日線', line=dict(color='green', width=1)))
 
-    buy_dates_dow, buy_prices_dow, buy_texts_dow = [], [], []
-    buy_dates_other, buy_prices_other, buy_texts_other = [], [], []
-    sell_dates_dow, sell_prices_dow, sell_texts_dow = [], [], []
-    sell_dates_other, sell_prices_other, sell_texts_other = [], [], []
+    buy_categories = [
+        ("移動平均線(買い)", ["ゴールデンクロス", "パーフェクトオーダー", "週足GC"], "triangle-up", "cyan"),
+        ("MACD(買い)", ["MACD上抜け"], "circle", "lime"),
+        ("グランビル(買い)", ["グランビルの法則(買い"], "square", "dodgerblue"),
+        ("一目均衡表(買い)", ["一目均衡表"], "diamond", "mediumspringgreen"),
+        ("ダウ理論(買い)", ["ダウ理論(上昇波)", "週足ダウ理論(上昇波)"], "star", "gold"),
+        ("RSI(買い)", ["RSI売られすぎ"], "pentagon", "orange"),
+        ("ブレイクアウト", ["新高値ブレイクアウト"], "hexagram", "yellow")
+    ]
+    
+    sell_categories = [
+        ("移動平均線(売り)", ["デッドクロス", "週足DC"], "triangle-down", "magenta"),
+        ("MACD(売り)", ["MACD下抜け"], "circle", "pink"),
+        ("グランビル(売り)", ["グランビルの法則(売り"], "square", "violet"),
+        ("ダウ理論(売り)", ["ダウ理論(下降波)", "週足ダウ理論(下降波)"], "star", "purple"),
+        ("ローソク足(売り)", ["ローソク足"], "x", "red"),
+        ("RSI(売り)", ["RSI買われすぎ"], "pentagon", "crimson")
+    ]
+
+    buy_plots = {cat[0]: {'dates': [], 'prices': [], 'texts': [], 'symbol': cat[2], 'color': cat[3]} for cat in buy_categories}
+    sell_plots = {cat[0]: {'dates': [], 'prices': [], 'texts': [], 'symbol': cat[2], 'color': cat[3]} for cat in sell_categories}
 
     for i in range(len(df)):
+        low_price = df['Low'].iloc[i]
+        high_price = df['High'].iloc[i]
+        
+        # 同一日に複数シグナルが出た場合に重ならないようオフセットを設ける
+        b_count = 0
         if df['Buy_Signals'].iloc[i]:
             for sig in df['Buy_Signals'].iloc[i]:
-                if "ダウ理論" in sig:
-                    buy_dates_dow.append(df.index[i])
-                    buy_prices_dow.append(df['Low'].iloc[i] * 0.96) 
-                    buy_texts_dow.append(sig)
-                else:
-                    buy_dates_other.append(df.index[i])
-                    buy_prices_other.append(df['Low'].iloc[i] * 0.98)
-                    buy_texts_other.append(sig)
-                    
+                # 買いシグナルは安値から1.5%ずつ下にずらして配置
+                plot_price = low_price * (0.98 - (b_count * 0.015))
+                
+                for cat_name, keywords, sym, col in buy_categories:
+                    if any(kw in sig for kw in keywords):
+                        buy_plots[cat_name]['dates'].append(df.index[i])
+                        buy_plots[cat_name]['prices'].append(plot_price)
+                        buy_plots[cat_name]['texts'].append(sig)
+                        b_count += 1
+                        break
+                        
+        s_count = 0
         if df['Sell_Signals'].iloc[i]:
             for sig in df['Sell_Signals'].iloc[i]:
-                if "ダウ理論" in sig:
-                    sell_dates_dow.append(df.index[i])
-                    sell_prices_dow.append(df['High'].iloc[i] * 1.04) 
-                    sell_texts_dow.append(sig)
-                else:
-                    sell_dates_other.append(df.index[i])
-                    sell_prices_other.append(df['High'].iloc[i] * 1.02)
-                    sell_texts_other.append(sig)
+                # 売りシグナルは高値から1.5%ずつ上にずらして配置
+                plot_price = high_price * (1.02 + (s_count * 0.015))
+                
+                for cat_name, keywords, sym, col in sell_categories:
+                    if any(kw in sig for kw in keywords):
+                        sell_plots[cat_name]['dates'].append(df.index[i])
+                        sell_plots[cat_name]['prices'].append(plot_price)
+                        sell_plots[cat_name]['texts'].append(sig)
+                        s_count += 1
+                        break
 
-    fig.add_trace(go.Scatter(x=buy_dates_other, y=buy_prices_other, mode='markers',
-                             marker=dict(symbol='triangle-up', color='cyan', size=10, line=dict(width=1, color='DarkSlateGrey')),
-                             name='買いシグナル', text=buy_texts_other, hoverinfo='text+x'))
-                             
-    fig.add_trace(go.Scatter(x=buy_dates_dow, y=buy_prices_dow, mode='markers',
-                             marker=dict(symbol='star', color='gold', size=12, line=dict(width=1, color='DarkSlateGrey')),
-                             name='ダウ理論(買い)', text=buy_texts_dow, hoverinfo='text+x'))
+    for cat_name, data in buy_plots.items():
+        if data['dates']:
+            fig.add_trace(go.Scatter(x=data['dates'], y=data['prices'], mode='markers',
+                                     marker=dict(symbol=data['symbol'], color=data['color'], size=11, line=dict(width=1, color='DarkSlateGrey')),
+                                     name=cat_name, text=data['texts'], hoverinfo='text+x'))
 
-    fig.add_trace(go.Scatter(x=sell_dates_other, y=sell_prices_other, mode='markers',
-                             marker=dict(symbol='triangle-down', color='magenta', size=10, line=dict(width=1, color='DarkSlateGrey')),
-                             name='売りシグナル', text=sell_texts_other, hoverinfo='text+x'))
-                             
-    fig.add_trace(go.Scatter(x=sell_dates_dow, y=sell_prices_dow, mode='markers',
-                             marker=dict(symbol='star', color='purple', size=12, line=dict(width=1, color='white')),
-                             name='ダウ理論(売り)', text=sell_texts_dow, hoverinfo='text+x'))
+    for cat_name, data in sell_plots.items():
+        if data['dates']:
+            fig.add_trace(go.Scatter(x=data['dates'], y=data['prices'], mode='markers',
+                                     marker=dict(symbol=data['symbol'], color=data['color'], size=11, line=dict(width=1, color='white' if data['symbol']=='star' else 'DarkSlateGrey')),
+                                     name=cat_name, text=data['texts'], hoverinfo='text+x'))
 
     fig.update_layout(
         title="株価チャート (過去3年)",
         yaxis_title='株価',
         xaxis_rangeslider_visible=False,
-        height=600,
+        height=650, # 凡例が増えるためチャートの縦幅を少し拡大
         margin=dict(l=50, r=50, t=50, b=50),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
