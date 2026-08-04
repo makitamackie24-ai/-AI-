@@ -184,10 +184,6 @@ def calculate_signals(df):
                     if "ローソク足(包み足・陰線)" not in df['Sell_Signals'].iloc[i]:
                         df['Sell_Signals'].iloc[i].append("ローソク足(否定陰線)")
 
-        # RSI買われすぎ (追加)
-        if df['RSI'].iloc[i-1] <= 70 and df['RSI'].iloc[i] > 70:
-            df['Sell_Signals'].iloc[i].append("RSI買われすぎ(70超)")
-
     # ---------------------------
     # 週足指標とシグナルの計算
     # ---------------------------
