@@ -30,21 +30,25 @@ def calculate_signals(df):
     """各種テクニカル指標と売買シグナルを計算"""
     df = df.copy()
     
+    # 移動平均線
     df['SMA_5'] = df['Close'].rolling(window=5).mean()
     df['SMA_20'] = df['Close'].rolling(window=20).mean()
     df['SMA_60'] = df['Close'].rolling(window=60).mean()
     
+    # MACD
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
+    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
 
+    # 一目均衡表
     high_9 = df['High'].rolling(window=9).max()
     low_9 = df['Low'].rolling(window=9).min()
     df['Tenkan'] = (high_9 + low_9) / 2
@@ -61,8 +65,10 @@ def calculate_signals(df):
     
     df['Chikou_Span'] = df['Close'].shift(-26)
 
+    # 新高値用
     df['High_125'] = df['High'].rolling(window=125).max().shift(1)
     
+    # シグナル格納用リスト
     df['Buy_Signals'] = [[] for _ in range(len(df))]
     df['Sell_Signals'] = [[] for _ in range(len(df))]
 
@@ -75,13 +81,14 @@ def calculate_signals(df):
         if df['SMA_5'].iloc[i-1] <= df['SMA_20'].iloc[i-1] and df['SMA_5'].iloc[i] > df['SMA_20'].iloc[i]:
             df['Buy_Signals'].iloc[i].append("ゴールデンクロス(5日/20日)")
             
-        # 2. MACD上抜け
+        # 2. MACD上抜け (シグナル線を上抜け)
         if df['MACD'].iloc[i-1] <= df['Signal'].iloc[i-1] and df['MACD'].iloc[i] > df['Signal'].iloc[i]:
              df['Buy_Signals'].iloc[i].append("MACD上抜け")
              
         sma20_trend_up = df['SMA_20'].iloc[i] > df['SMA_20'].iloc[i-5]
         sma20_trend_down = df['SMA_20'].iloc[i] < df['SMA_20'].iloc[i-5]
         
+        # グランビルの法則(買い)
         if sma20_trend_up and df['Close'].iloc[i-1] < df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] > df['SMA_20'].iloc[i]:
             df['Buy_Signals'].iloc[i].append("グランビルの法則(買い①: 買い転換)")
             
@@ -91,6 +98,7 @@ def calculate_signals(df):
         if sma20_trend_up and df['Close'].iloc[i] > df['SMA_20'].iloc[i] and df['Low'].iloc[i-1] <= df['SMA_20'].iloc[i-1] * 1.01 and df['Close'].iloc[i] > df['Close'].iloc[i-1]:
             df['Buy_Signals'].iloc[i].append("グランビルの法則(買い③: 買い乗せ)")
 
+        # 一目均衡表
         if i >= 26:
             tenkan_cross = df['Tenkan'].iloc[i-1] <= df['Kijun'].iloc[i-1] and df['Tenkan'].iloc[i] > df['Kijun'].iloc[i]
             price_above_cloud = df['Close'].iloc[i] > max(df['Senkou_Span_A'].iloc[i], df['Senkou_Span_B'].iloc[i])
@@ -98,24 +106,34 @@ def calculate_signals(df):
             if tenkan_cross and price_above_cloud and chikou_above_price:
                 df['Buy_Signals'].iloc[i].append("一目均衡表(三役好転)")
 
+        # ダウ理論
         if df['Close'].iloc[i] > df['Close'].iloc[i-1] and df['Low'].iloc[i] > df['Low'].iloc[i-1] and df['High'].iloc[i] > df['High'].iloc[i-1]:
             if df['Close'].iloc[i-1] > df['Close'].iloc[i-2] and df['Low'].iloc[i-1] > df['Low'].iloc[i-2]:
                  df['Buy_Signals'].iloc[i].append("ダウ理論(上昇波)")
                  
+        # パーフェクトオーダー
         if df['SMA_5'].iloc[i-1] <= df['SMA_20'].iloc[i-1] or df['SMA_20'].iloc[i-1] <= df['SMA_60'].iloc[i-1]:
             if df['SMA_5'].iloc[i] > df['SMA_20'].iloc[i] > df['SMA_60'].iloc[i] and df['SMA_60'].iloc[i] > df['SMA_60'].iloc[i-1]:
                  df['Buy_Signals'].iloc[i].append("パーフェクトオーダー(買い)")
                  
+        # ブレイクアウト
         if pd.notna(df['High_125'].iloc[i]) and df['Close'].iloc[i] > df['High_125'].iloc[i] and df['Close'].iloc[i-1] <= df['High_125'].iloc[i-1]:
              df['Buy_Signals'].iloc[i].append("過去半年の新高値ブレイクアウト")
 
+        # RSI売られすぎ (追加)
+        if df['RSI'].iloc[i-1] >= 30 and df['RSI'].iloc[i] < 30:
+            df['Buy_Signals'].iloc[i].append("RSI売られすぎ(30未満)")
+
         # --- 売りシグナル ---
+        # デッドクロス
         if df['SMA_5'].iloc[i-1] >= df['SMA_20'].iloc[i-1] and df['SMA_5'].iloc[i] < df['SMA_20'].iloc[i]:
             df['Sell_Signals'].iloc[i].append("デッドクロス(5日/20日)")
             
+        # MACD下抜け
         if df['MACD'].iloc[i-1] >= df['Signal'].iloc[i-1] and df['MACD'].iloc[i] < df['Signal'].iloc[i]:
              df['Sell_Signals'].iloc[i].append("MACD下抜け")
              
+        # グランビルの法則(売り)
         if sma20_trend_down and df['Close'].iloc[i-1] > df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] < df['SMA_20'].iloc[i]:
             df['Sell_Signals'].iloc[i].append("グランビルの法則(売り①: 売り転換)")
             
@@ -125,10 +143,12 @@ def calculate_signals(df):
         if sma20_trend_down and df['Close'].iloc[i] < df['SMA_20'].iloc[i] and df['High'].iloc[i-1] >= df['SMA_20'].iloc[i-1] * 0.99 and df['Close'].iloc[i] < df['Close'].iloc[i-1]:
              df['Sell_Signals'].iloc[i].append("グランビルの法則(売り③: 売り乗せ)")
 
+        # ダウ理論
         if df['Close'].iloc[i] < df['Close'].iloc[i-1] and df['High'].iloc[i] < df['High'].iloc[i-1] and df['Low'].iloc[i] < df['Low'].iloc[i-1]:
             if df['Close'].iloc[i-1] < df['Close'].iloc[i-2] and df['High'].iloc[i-1] < df['High'].iloc[i-2]:
                 df['Sell_Signals'].iloc[i].append("ダウ理論(下降波)")
                 
+        # ローソク足
         if high_zone[i]:
             if df['Close'].iloc[i-1] > df['Open'].iloc[i-1]: 
                 if df['Open'].iloc[i] > df['Close'].iloc[i-1] and df['Close'].iloc[i] < df['Open'].iloc[i-1]:
@@ -139,6 +159,10 @@ def calculate_signals(df):
                     if "ローソク足(包み足・陰線)" not in df['Sell_Signals'].iloc[i]:
                         df['Sell_Signals'].iloc[i].append("ローソク足(否定陰線)")
 
+        # RSI買われすぎ (追加)
+        if df['RSI'].iloc[i-1] <= 70 and df['RSI'].iloc[i] > 70:
+            df['Sell_Signals'].iloc[i].append("RSI買われすぎ(70超)")
+
     return df
 
 def calculate_signal_performance(df):
@@ -147,7 +171,7 @@ def calculate_signal_performance(df):
     sell_performance = {}
     current_date = df.index[-1]
     
-    # シグナルの重み付け設定
+    # シグナルの重み付け設定 (RSIを追加)
     weights_buy = {
         "グランビルの法則(買い①: 買い転換)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4], 
         "グランビルの法則(買い②: 押し目買い)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4], 
@@ -157,7 +181,8 @@ def calculate_signal_performance(df):
         "一目均衡表(三役好転)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
         "ダウ理論(上昇波)": [0, 0, 0, 0.6, 0.4, 0, 0],                     
         "パーフェクトオーダー(買い)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
-        "過去半年の新高値ブレイクアウト": [0, 0, 0, 0.1, 0.2, 0.3, 0.4]
+        "過去半年の新高値ブレイクアウト": [0, 0, 0, 0.1, 0.2, 0.3, 0.4],
+        "RSI売られすぎ(30未満)": [0, 0, 0, 0.1, 0.2, 0.3, 0.4] # RSI追加
     }
     
     weights_sell = {
@@ -168,7 +193,8 @@ def calculate_signal_performance(df):
         "MACD下抜け": [0, 0, 0, 1.0, 0, 0, 0],
         "ダウ理論(下降波)": [0.4, 0.3, 0.3, 0, 0, 0, 0],                 
         "ローソク足(包み足・陰線)": [0.4, 0.3, 0.3, 0, 0, 0, 0],
-        "ローソク足(否定陰線)": [0.4, 0.3, 0.3, 0, 0, 0, 0]
+        "ローソク足(否定陰線)": [0.4, 0.3, 0.3, 0, 0, 0, 0],
+        "RSI買われすぎ(70超)": [0, 0, 0, 1.0, 0, 0, 0] # RSI追加
     }
 
     for i in range(len(df)):
@@ -285,7 +311,6 @@ def predict_trend_rf(df):
     rf = RandomForestClassifier(n_estimators=200, random_state=42)
     rf.fit(X, y)
     
-    # Pandas最新仕様に合わせた欠損値補完処理（エラー対策）
     latest_features = df[features].ffill().iloc[-1:]
     prediction = rf.predict(latest_features)[0]
     probabilities = rf.predict_proba(latest_features)[0]
@@ -490,7 +515,6 @@ def main():
     st.set_page_config(page_title="多角的シグナル検知AIツール", layout="wide")
     st.title("多角的シグナル検知AIツール(完全版)")
     
-    # ご指定いただいた21銘柄のリスト（JX金属を削除済み、インデント修正済み）
     tickers = {
         "NTT(株)": "9432.T",
         "ソフトバンク(株)": "9434.T",
@@ -540,11 +564,10 @@ def main():
             
         my_bar.progress(1.0, text="解析完了！")
 
-# --- サイドバー設定 ---
+# --- サイドバー設定と説明文の修正 ---
     if st.sidebar.button("🔄 キャッシュクリア"):
         st.cache_data.clear()
 
-# --- 備忘録（シグナル定義・数値基準） ---
     with st.sidebar.expander("📖 シグナル判断の数値基準"):
         st.markdown("""
         ### 📈 買いシグナル
@@ -559,10 +582,10 @@ def main():
           ②(押し目): 20日線が `上向き` で、直近で5日線が20日線を下回り、再度GC発生。
           ③(買い乗せ): 20日線が `上向き` かつ `5日線 > 20日線` で、5日線の傾きが `マイナス→プラス` に転換。
         * **MACD上抜け（ゴールデンクロス）**
-          条件: 当日のMACD線 > 当日のシグナル線 かつ 前日のMACD線 <= 前日のシグナル線。
-          意味: MACD線がシグナル線を下から上へ突き抜けた状態です。直近の価格モメンタムが上向きに変化したことを示し、トレンド転換や上昇の初期段階を捉える買いサインとして機能します。する強い買いサインとして機能します。
+        　条件: 当日のMACD線 > 当日のシグナル線 かつ 前日のMACD線 <= 前日のシグナル線。
+        　意味: MACD線がシグナル線を下から上へ突き抜けた状態です。直近の価格モメンタムが上向きに変化したことを示し、トレンド転換や上昇の初期段階を捉える買いサインとして機能します。
         * **RSI売られすぎ**
-          14日間のRSIが `30%未満` になった最初の日。
+          14日間のRSIが `30%未満` になった最初の日（逆張りの買いシグナル）。
     
         ---
         ### 📉 売りシグナル
@@ -578,10 +601,10 @@ def main():
           ②(戻り売り): 20日線が `下向き` で、直近で5日線が20日線を上回り、再度DC発生。
           ③(売り乗せ): 20日線が `下向き` かつ `5日線 < 20日線` で、5日線の傾きが `プラス→マイナス` に転換。
         * **MACD下抜け（デッドクロス）**
-          条件: 当日のMACD線 < 当日のシグナル線 かつ 前日のMACD線 >= 前日のシグナル線。
-          意味: MACD線がシグナル線を上から下へ突き抜けた状態です。直近の価格モメンタムが下向きに変化したことを示し、上昇トレンドの終わりや下落の始まりを警戒する売りサインとなります。強い売りサインとして警戒されます。
+        　条件: 当日のMACD線 < 当日のシグナル線 かつ 前日のMACD線 >= 前日のシグナル線。
+        　意味: MACD線がシグナル線を上から下へ突き抜けた状態です。直近の価格モメンタムが下向きに変化したことを示し、上昇トレンドの終わりや下落の始まりを警戒する売りサインとなります。
         * **RSI買われすぎ**
-          14日間のRSIが `70%超` になった最初の日。
+          14日間のRSIが `70%超` になった最初の日（短期的な過熱を示す売りシグナル）。
         """) 
 
 if __name__ == "__main__":
