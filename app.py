@@ -78,27 +78,40 @@ def calculate_signals(df):
     for i in range(1, len(df)):
         # --- 買いシグナル ---
         # 1. ゴールデンクロス (5日線が20日線を下から上へ抜ける)
-        if df['SMA_5'].iloc[i-1] <= df['SMA_20'].iloc[i-1] and df['SMA_5'].iloc[i] > df['SMA_20'].iloc[i]:
+        gc_condition = df['SMA_5'].iloc[i-1] <= df['SMA_20'].iloc[i-1] and df['SMA_5'].iloc[i] > df['SMA_20'].iloc[i]
+        if gc_condition:
             df['Buy_Signals'].iloc[i].append("ゴールデンクロス(5日/20日)")
             
-        # 2. MACD上抜け (シグナル線を上抜け)
+        # 2. MACD上抜け
         if df['MACD'].iloc[i-1] <= df['Signal'].iloc[i-1] and df['MACD'].iloc[i] > df['Signal'].iloc[i]:
              df['Buy_Signals'].iloc[i].append("MACD上抜け")
-             
-        sma20_trend_up = df['SMA_20'].iloc[i] > df['SMA_20'].iloc[i-5]
-        sma20_trend_down = df['SMA_20'].iloc[i] < df['SMA_20'].iloc[i-5]
-        
-        # グランビルの法則(買い)
-        if sma20_trend_up and df['Close'].iloc[i-1] < df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] > df['SMA_20'].iloc[i]:
-            df['Buy_Signals'].iloc[i].append("グランビルの法則(買い①: 買い転換)")
-            
-        if sma20_trend_up and df['Close'].iloc[i-1] < df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] > df['SMA_20'].iloc[i] and df['Close'].iloc[i-5] > df['SMA_20'].iloc[i-5]:
-            df['Buy_Signals'].iloc[i].append("グランビルの法則(買い②: 押し目買い)")
-            
-        if sma20_trend_up and df['Close'].iloc[i] > df['SMA_20'].iloc[i] and df['Low'].iloc[i-1] <= df['SMA_20'].iloc[i-1] * 1.01 and df['Close'].iloc[i] > df['Close'].iloc[i-1]:
-            df['Buy_Signals'].iloc[i].append("グランビルの法則(買い③: 買い乗せ)")
 
-        # 一目均衡表
+        # RSI売られすぎ (30未満)
+        if df['RSI'].iloc[i-1] >= 30 and df['RSI'].iloc[i] < 30:
+            df['Buy_Signals'].iloc[i].append("RSI売られすぎ(30未満)")
+             
+        # グランビルの法則(買い) - 5日線と20日線の関係で判定
+        if i >= 3:
+            # 20日線の状態定義
+            sma20_falling_previously = df['SMA_20'].iloc[i-3] > df['SMA_20'].iloc[i-1] # 一定期間下落していたか
+            sma20_flat_or_up = df['SMA_20'].iloc[i] >= df['SMA_20'].iloc[i-1]          # 現在横ばい、または上向きか
+            sma20_up = df['SMA_20'].iloc[i] > df['SMA_20'].iloc[i-1]                   # 現在明確に上向きか
+            
+            # ① 買い転換: 20日線が下落後、横ばいor上向きでGC発生
+            if sma20_falling_previously and sma20_flat_or_up and gc_condition:
+                df['Buy_Signals'].iloc[i].append("グランビルの法則(買い①: 買い転換)")
+                
+            # ② 押し目買い: 20日線が上向きの時にGC発生（以前下回っていたものが再度上抜ける）
+            if sma20_up and gc_condition and not sma20_falling_previously:
+                df['Buy_Signals'].iloc[i].append("グランビルの法則(買い②: 押し目買い)")
+                
+            # ③ 買い乗せ: 20日線上向き、5日線が20日線を下抜けず(上にある状態)で、5日線が下落→上昇に転じる
+            sma5_above_20 = df['SMA_5'].iloc[i] > df['SMA_20'].iloc[i] and df['SMA_5'].iloc[i-1] > df['SMA_20'].iloc[i-1]
+            sma5_dipped_then_rose = df['SMA_5'].iloc[i-2] > df['SMA_5'].iloc[i-1] and df['SMA_5'].iloc[i-1] < df['SMA_5'].iloc[i]
+            
+            if sma20_up and sma5_above_20 and sma5_dipped_then_rose:
+                df['Buy_Signals'].iloc[i].append("グランビルの法則(買い③: 買い乗せ)")
+
         if i >= 26:
             tenkan_cross = df['Tenkan'].iloc[i-1] <= df['Kijun'].iloc[i-1] and df['Tenkan'].iloc[i] > df['Kijun'].iloc[i]
             price_above_cloud = df['Close'].iloc[i] > max(df['Senkou_Span_A'].iloc[i], df['Senkou_Span_B'].iloc[i])
@@ -120,30 +133,42 @@ def calculate_signals(df):
         if pd.notna(df['High_125'].iloc[i]) and df['Close'].iloc[i] > df['High_125'].iloc[i] and df['Close'].iloc[i-1] <= df['High_125'].iloc[i-1]:
              df['Buy_Signals'].iloc[i].append("過去半年の新高値ブレイクアウト")
 
-        # RSI売られすぎ (追加)
-        if df['RSI'].iloc[i-1] >= 30 and df['RSI'].iloc[i] < 30:
-            df['Buy_Signals'].iloc[i].append("RSI売られすぎ(30未満)")
-
         # --- 売りシグナル ---
         # デッドクロス
-        if df['SMA_5'].iloc[i-1] >= df['SMA_20'].iloc[i-1] and df['SMA_5'].iloc[i] < df['SMA_20'].iloc[i]:
+        dc_condition = df['SMA_5'].iloc[i-1] >= df['SMA_20'].iloc[i-1] and df['SMA_5'].iloc[i] < df['SMA_20'].iloc[i]
+        if dc_condition:
             df['Sell_Signals'].iloc[i].append("デッドクロス(5日/20日)")
             
         # MACD下抜け
         if df['MACD'].iloc[i-1] >= df['Signal'].iloc[i-1] and df['MACD'].iloc[i] < df['Signal'].iloc[i]:
              df['Sell_Signals'].iloc[i].append("MACD下抜け")
-             
-        # グランビルの法則(売り)
-        if sma20_trend_down and df['Close'].iloc[i-1] > df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] < df['SMA_20'].iloc[i]:
-            df['Sell_Signals'].iloc[i].append("グランビルの法則(売り①: 売り転換)")
-            
-        if sma20_trend_down and df['Close'].iloc[i-1] > df['SMA_20'].iloc[i-1] and df['Close'].iloc[i] < df['SMA_20'].iloc[i] and df['Close'].iloc[i-5] < df['SMA_20'].iloc[i-5]:
-             df['Sell_Signals'].iloc[i].append("グランビルの法則(売り②: 戻り売り)")
-             
-        if sma20_trend_down and df['Close'].iloc[i] < df['SMA_20'].iloc[i] and df['High'].iloc[i-1] >= df['SMA_20'].iloc[i-1] * 0.99 and df['Close'].iloc[i] < df['Close'].iloc[i-1]:
-             df['Sell_Signals'].iloc[i].append("グランビルの法則(売り③: 売り乗せ)")
 
-        # ダウ理論
+        # RSI買われすぎ (70超)
+        if df['RSI'].iloc[i-1] <= 70 and df['RSI'].iloc[i] > 70:
+            df['Sell_Signals'].iloc[i].append("RSI買われすぎ(70超)")
+             
+        # グランビルの法則(売り) - 5日線と20日線の関係で判定
+        if i >= 3:
+            # 20日線の状態定義
+            sma20_rising_previously = df['SMA_20'].iloc[i-3] < df['SMA_20'].iloc[i-1] # 一定期間上昇していたか
+            sma20_flat_or_down = df['SMA_20'].iloc[i] <= df['SMA_20'].iloc[i-1]       # 現在横ばい、または下向きか
+            sma20_down = df['SMA_20'].iloc[i] < df['SMA_20'].iloc[i-1]                # 現在明確に下向きか
+
+            # ① 売り転換: 20日線が上昇後、横ばいor下向きでDC発生
+            if sma20_rising_previously and sma20_flat_or_down and dc_condition:
+                df['Sell_Signals'].iloc[i].append("グランビルの法則(売り①: 売り転換)")
+                
+            # ② 戻り売り: 20日線が下向きの時にDC発生
+            if sma20_down and dc_condition and not sma20_rising_previously:
+                 df['Sell_Signals'].iloc[i].append("グランビルの法則(売り②: 戻り売り)")
+                 
+            # ③ 売り乗せ: 20日線下向き、5日線が20日線を上抜けず(下にある状態)で、5日線が上昇→下落に転じる
+            sma5_below_20 = df['SMA_5'].iloc[i] < df['SMA_20'].iloc[i] and df['SMA_5'].iloc[i-1] < df['SMA_20'].iloc[i-1]
+            sma5_rose_then_dipped = df['SMA_5'].iloc[i-2] < df['SMA_5'].iloc[i-1] and df['SMA_5'].iloc[i-1] > df['SMA_5'].iloc[i]
+            
+            if sma20_down and sma5_below_20 and sma5_rose_then_dipped:
+                 df['Sell_Signals'].iloc[i].append("グランビルの法則(売り③: 売り乗せ)")
+
         if df['Close'].iloc[i] < df['Close'].iloc[i-1] and df['High'].iloc[i] < df['High'].iloc[i-1] and df['Low'].iloc[i] < df['Low'].iloc[i-1]:
             if df['Close'].iloc[i-1] < df['Close'].iloc[i-2] and df['High'].iloc[i-1] < df['High'].iloc[i-2]:
                 df['Sell_Signals'].iloc[i].append("ダウ理論(下降波)")
@@ -657,9 +682,9 @@ def main():
         * **ゴールデンクロス**
           当日の `5日線 > 20日線` かつ 前日の `5日線 <= 20日線`。
         * **グランビルの法則 (買い)**
-          ①(転換): 20日線の傾きが `0以下→0以上` になり、GC発生。
-          ②(押し目): 20日線が `上向き` で、直近で5日線が20日線を下回り、再度GC発生。
-          ③(買い乗せ): 20日線が `上向き` かつ `5日線 > 20日線` で、5日線の傾きが `マイナス→プラス` に転換。
+          ①(買い転換): 20日移動平均線が一定期間下落後、横ばい、または上向きに転じて5日移動平均線が下から上に抜けた場合。
+          ②(押し目買い): 20日移動平均線が上向きの時に、5日移動平均線が下落して20日移動平均線を一時下回るも、再度上昇して下から上に突き抜けた場合。
+          ③(買い乗せ): 20日移動平均線が上向きの時に、5日移動平均線がいったん下落するも20日移動平均線を下抜けせずに再度上昇する場合。
         * **MACD上抜け（ゴールデンクロス）**
         　条件: 当日のMACD線 > 当日のシグナル線 かつ 前日のMACD線 <= 前日のシグナル線。
         　意味: MACD線がシグナル線を下から上へ突き抜けた状態です。直近の価格モメンタムが上向きに変化したことを示し、トレンド転換や上昇の初期段階を捉える買いサインとして機能します。
@@ -680,9 +705,9 @@ def main():
         * **デッドクロス**
           当日の `5日線 < 20日線` かつ 前日の `5日線 >= 20日線`。
         * **グランビルの法則 (売り)**
-          ①(転換): 20日線の傾きが `0以上→0以下` になり、DC発生。
-          ②(戻り売り): 20日線が `下向き` で、直近で5日線が20日線を上回り、再度DC発生。
-          ③(売り乗せ): 20日線が `下向き` かつ `5日線 < 20日線` で、5日線の傾きが `プラス→マイナス` に転換。
+          ①(売り転換): 20日移動平均線が一定期間上昇後、横ばい、または下向きに転じて5日移動平均線が上から下に抜けた場合。
+          ②(戻り売り): 20日移動平均線が下向きの時に、5日移動平均線が上昇して20日移動平均線を一時上回るも、再度下落して上から下に突き抜けた場合。
+          ③(売り乗せ): 20日移動平均線が下向きの時に、5日移動平均線がいったん上昇するも20日移動平均線の上に抜けずに再度下落する場合。
         * **MACD下抜け（デッドクロス）**
         　条件: 当日のMACD線 < 当日のシグナル線 かつ 前日のMACD線 >= 前日のシグナル線。
         　意味: MACD線がシグナル線を上から下へ突き抜けた状態です。直近の価格モメンタムが下向きに変化したことを示し、上昇トレンドの終わりや下落の始まりを警戒する売りサインとなります。
