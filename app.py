@@ -431,7 +431,7 @@ def create_chart(df):
         ("ダウ理論 日足(買い)", ["ダウ理論(上昇波)"], "star", "gold"),
         ("ダウ理論 週足(買い)", ["週足ダウ理論(上昇波)"], "hexagram", "darkorange"),
         ("RSI(買い)", ["RSI売られすぎ"], "pentagon", "orange"),
-        ("ブレイクアウト", ["新高値ブレイクアウト"], "asterisk", "yellow")
+        ("ブレイクアウト", ["新高値ブレイクアウト"], "hexagon", "yellow")
     ]
     
     sell_categories = [
@@ -483,7 +483,7 @@ def create_chart(df):
 
     for cat_name, data in buy_plots.items():
         if data['dates']:
-            line_color = 'black' if data['symbol'] in ['star', 'hexagram', 'cross', 'asterisk'] else 'DarkSlateGrey'
+            line_color = 'black' if data['symbol'] in ['star', 'hexagram', 'cross', 'hexagon'] else 'DarkSlateGrey'
             fig.add_trace(go.Scatter(x=data['dates'], y=data['prices'], mode='markers',
                                      marker=dict(symbol=data['symbol'], color=data['color'], size=11, line=dict(width=1, color=line_color)),
                                      name=cat_name, text=data['texts'], hoverinfo='text+x'))
